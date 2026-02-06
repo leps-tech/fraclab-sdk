@@ -1,0 +1,53 @@
+[tool.poetry]
+name = "fraclab-sdk"
+version = "0.1.2"
+description = "SDK for managing snapshots, algorithms, and run execution"
+authors = []
+readme = "README.md"
+include = [
+    { path = "README.md", format = ["sdist", "wheel"] },
+    { path = "CHANGELOG.md", format = ["sdist", "wheel"] },
+]
+packages = [{ include = "fraclab_sdk", from = "src" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = "^2.10.0"
+typer = "^0.15.0"
+rich = "^13.9.0"
+numpy = "^2.1.1"
+pandas = "^2.2.3"
+scipy = "^1.13.1"
+matplotlib = "^3.9.2"
+fastapi = "^0.115.0"
+streamlit = {version = ">=1.30", optional = true}
+pyarrow = {version = ">=16.0.0", optional = true}
+
+[tool.poetry.group.dev.dependencies]
+ruff = "^0.8.0"
+pytest = "^8.3.0"
+pytest-cov = "^6.0.0"
+
+[tool.poetry.extras]
+workbench = ["streamlit", "pyarrow"]
+
+[tool.poetry.scripts]
+fraclab-runner = "fraclab_sdk.runtime.runner_main:main"
+fraclab-sdk = "fraclab_sdk.cli:main"
+fraclab-workbench = "fraclab_sdk.workbench.__main__:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501", "B008"]  # B008: typer.Option in defaults is standard typer usage
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -1,0 +1,14 @@
+# Ignore everything by default
+*
+
+# Keep gitignore itself
+!.gitignore
+
+# Keep SDK source code
+!src/
+!src/**
+
+# Keep package/release metadata docs
+!pyproject.toml
+!README.md
+!CHANGELOG.md
