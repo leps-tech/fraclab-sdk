@@ -40,7 +40,7 @@ jobs:
           pyproject_version = pyproject["tool"]["poetry"]["version"]
 
           version_py = (repo / "src/fraclab_sdk/version.py").read_text(encoding="utf-8")
-          match = re.search(r'__version__\\s*=\\s*"([^"]+)"', version_py)
+          match = re.search(r'__version__\s*=\s*"([^"]+)"', version_py)
           if not match:
               print("Failed to parse __version__ in src/fraclab_sdk/version.py")
               sys.exit(1)
