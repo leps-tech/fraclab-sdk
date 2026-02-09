@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RunInfo(BaseModel):
@@ -29,32 +29,15 @@ class OwnerRef(BaseModel):
 class ArtifactInfo(BaseModel):
     """Information about an output artifact."""
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore")
 
     artifactKey: str
-    type: str = Field(
-        validation_alias=AliasChoices("type", "artifactType"),
-        serialization_alias="type",
-    )  # e.g., "scalar", "blob", "json", "frame", "parquet"
-    uri: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("uri", "fileUri"),
-        serialization_alias="uri",
-    )
+    type: str  # e.g., "scalar", "blob", "json", "frame", "parquet"
+    uri: str | None = None
     mimeType: str | None = None
     description: str | None = None
     value: Any | None = None  # For scalar artifacts
     inline: dict[str, Any] | None = None  # Optional embedded payload
-
-    @property
-    def artifactType(self) -> str:
-        """Backward-compatible accessor for artifact type."""
-        return self.type
-
-    @property
-    def fileUri(self) -> str | None:
-        """Backward-compatible accessor for file URI."""
-        return self.uri
 
 
 class RunOutputItem(BaseModel):

@@ -143,21 +143,8 @@ class RunIndex:
 
     @staticmethod
     def _coerce_status(value: str) -> RunStatus:
-        """Map legacy statuses to new enum."""
-        mapping = {
-            "completed": RunStatus.SUCCEEDED,
-            "failed": RunStatus.FAILED,
-            "pending": RunStatus.PENDING,
-            "running": RunStatus.RUNNING,
-            "timeout": RunStatus.TIMEOUT,
-            "succeeded": RunStatus.SUCCEEDED,
-        }
-        if value in mapping:
-            return mapping[value]
-        try:
-            return RunStatus(value)
-        except Exception:
-            return RunStatus.FAILED
+        """Parse persisted run status as strict RunStatus enum."""
+        return RunStatus(value)
 
 
 class RunManager:

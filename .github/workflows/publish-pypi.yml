@@ -1,0 +1,71 @@
+name: Publish To PyPI
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Check Version Consistency
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+          import os
+          import pathlib
+          import re
+          import sys
+          import tomllib
+
+          repo = pathlib.Path(".")
+
+          ref_name = os.environ["GITHUB_REF_NAME"]
+          tag_version = ref_name[1:] if ref_name.startswith("v") else ref_name
+
+          pyproject = tomllib.loads((repo / "pyproject.toml").read_text(encoding="utf-8"))
+          pyproject_version = pyproject["tool"]["poetry"]["version"]
+
+          version_py = (repo / "src/fraclab_sdk/version.py").read_text(encoding="utf-8")
+          match = re.search(r'__version__\\s*=\\s*"([^"]+)"', version_py)
+          if not match:
+              print("Failed to parse __version__ in src/fraclab_sdk/version.py")
+              sys.exit(1)
+          module_version = match.group(1)
+
+          versions = {
+              "tag": tag_version,
+              "pyproject.toml": pyproject_version,
+              "src/fraclab_sdk/version.py": module_version,
+          }
+          unique = set(versions.values())
+          if len(unique) != 1:
+              print("Version mismatch detected:")
+              for name, value in versions.items():
+                  print(f"  {name}: {value}")
+              sys.exit(1)
+
+          print(f"Version check passed: {tag_version}")
+          PY
+
+      - name: Install Poetry
+        run: pip install poetry
+
+      - name: Build Package
+        run: poetry build
+
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1

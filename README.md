@@ -1,6 +1,6 @@
 # Fraclab SDK Reference
 
-> 版本: 0.1.1
+> 版本: 0.1.3
 > Python: >=3.11
 
 Fraclab SDK 是一个算法开发与执行框架，帮助算法开发者快速构建、测试和部署数据处理算法。
@@ -9,19 +9,31 @@ Fraclab SDK 是一个算法开发与执行框架，帮助算法开发者快速�
 
 ## 目录
 
-1. [安装](#安装)
-2. [快速开始：编写你的第一个算法](#快速开始编写你的第一个算法)
-3. [Bundle 与 Snapshot](#bundle-与-snapshot)
-4. [算法开发详解](#算法开发详解)
-5. [CLI 命令行工具](#cli-命令行工具)
-6. [SDK 内部模块](#sdk-内部模块)
-7. [数据模型](#数据模型)
-8. [错误处理](#错误处理)
-9. [附录 A: Bundle 结构详解](#附录-a-bundle-结构详解)
+- [1. 安装](#installation)
+- [2. 快速开始：编写你的第一个算法（从 Bundle 到运行）](#quickstart)
+  - [2.1 开发闭环（先看这个）](#quickstart-flow)
+  - [2.2 准备 Bundle 路径](#quickstart-bundle-path)
+  - [2.3 编写算法入口 `main.py`](#quickstart-main)
+  - [2.4 定义 `InputSpec`](#quickstart-inputspec)
+  - [2.5 定义 `OutputContract`](#quickstart-output-contract)
+  - [2.6 创建算法清单](#quickstart-manifest)
+  - [2.7 用 Bundle 编译并导出算法包](#quickstart-build-export)
+  - [2.8 导入并运行算法包](#quickstart-run)
+  - [2.9 `SelectionModel` 与 `run_ds` 的关系](#quickstart-selection-runds)
+- [3. Bundle 与 Snapshot（概念与关系）](#bundle-and-snapshot)
+- [4. 算法开发详解](#algorithm-development-guide)
+- [5. CLI 命令行工具](#cli-tools)
+- [6. SDK 内部模块](#sdk-internal-modules)
+- [7. 数据模型](#data-models)
+- [8. 错误处理](#error-handling)
+- [9. 安全特性](#security-features)
+- [10. 完整示例](#complete-examples)
+- [11. 附录 A: Bundle 结构详解](#appendix-a-bundle-structure)
 
 ---
 
-## 安装
+<a id="installation"></a>
+## 1. 安装
 
 轻量安装（核心 SDK / CLI，自动带上科学计算依赖）：
 
@@ -45,9 +57,48 @@ python -m fraclab_sdk.workbench
 
 ---
 
-## 快速开始：编写你的第一个算法
+<a id="quickstart"></a>
+## 2. 快速开始：编写你的第一个算法（从 Bundle 到运行）
 
-### 1. 导入运行时组件
+<a id="quickstart-flow"></a>
+### 2.1 开发闭环（先看这个）
+
+对初次使用者，先记住这一条主线：
+
+1. 你拿到平台给的 **Bundle** 目录（含 `manifest.json`、`ds.json`、`drs.json`、`data/`）
+2. 你编写算法源码（`main.py` + `schema/*` + `manifest.json`）
+3. 你用 Bundle 编译，生成 `dist/*.json`（尤其 `dist/ds.json` 与 `dist/drs.json`）
+4. 你导出算法 zip
+5. 你导入 Snapshot（来自 Bundle）和算法 zip
+6. 你创建 run、执行 run、查看结果
+
+推荐一条命令完成“编译 + 导出”：
+
+```bash
+fraclab-sdk algo export ./my-algorithm ./my-algorithm.zip --auto-compile --bundle /path/to/bundle
+```
+
+说明（与代码行为一致）：
+- `export` 本身要求 `dist/params.schema.json`、`dist/output_contract.json`、`dist/ds.json`、`dist/drs.json` 已存在
+- `--auto-compile` 会在缺少这些文件时自动调用 compile
+- `compile` 阶段如果没有可用的 `dist/ds.json` / `dist/drs.json`，就必须提供 `--bundle`（用于复制 bundle 的 `ds.json` 与 `drs.json`）
+
+<a id="quickstart-bundle-path"></a>
+### 2.2 准备 Bundle 路径
+
+Bundle 是算法开发和运行的共同输入。你至少会在两个阶段用到它：
+
+- **编译阶段**：提供 DS/DRS（生成 `dist/ds.json` 与 `dist/drs.json`）
+- **运行阶段**：导入为 Snapshot，作为 run 的数据来源
+
+最小检查：
+
+```bash
+fraclab-sdk validate bundle /path/to/bundle
+```
+
+<a id="quickstart-main"></a>
+### 2.3 编写算法入口 `main.py`
 
 算法开发者主要使用 `fraclab_sdk.runtime` 模块中的两个核心类：
 
@@ -58,7 +109,7 @@ from fraclab_sdk.runtime import DataClient, ArtifactWriter
 - **DataClient**: 读取输入数据
 - **ArtifactWriter**: 写入输出结果
 
-### 2. 编写算法入口
+#### 入口签名与模板
 
 创建 `main.py` 作为算法入口文件。
 
@@ -87,7 +138,7 @@ def run(ctx):
 > def execute(ctx):  # AttributeError: module has no attribute 'run'
 >
 > # ❌ 错误: 放在其他文件
-> # algorithm.py 中定义 run()  # 不会被加载
+> # helper.py 中定义 run()  # 不会被加载
 > ```
 
 #### 最小可运行模板
@@ -162,7 +213,8 @@ def process(data, threshold):
     return data.get("value", 0) > threshold
 ```
 
-### 3. 定义输入参数规格 (InputSpec)
+<a id="quickstart-inputspec"></a>
+### 2.4 定义输入参数规格 (InputSpec)
 
 创建 `schema/inputspec.py` 定义算法接受的参数：
 
@@ -250,7 +302,25 @@ def run(ctx):
 
 > **提示**: 如果 InputSpec 没有配置 `alias_generator`，则 JSON 和 ctx.params 键名都使用 `snake_case`。
 
-### 4. 定义输出合约 (OutputContract)
+#### 数值参数精度（Workbench）
+
+在 Workbench 的参数输入 UI 中，`number` 类型字段的显示精度按 `InputSpec` 生成的 schema `step` 决定：
+
+- 有 `step`：小数位数由 `step` 推导（例如 `step=0.01` 显示 2 位，`step=0.001` 显示 3 位）
+- 无 `step`：按整数显示（不显示小数位）
+
+示例：
+
+```python
+from pydantic import BaseModel, Field
+
+class InputParams(BaseModel):
+    threshold: float = Field(default=0.5, json_schema_extra={"step": 0.01})  # 2 位小数
+    gain: float = Field(default=1.0)  # 未设置 step，Workbench 按整数样式显示
+```
+
+<a id="quickstart-output-contract"></a>
+### 2.5 定义输出合约 (OutputContract)
 
 创建 `schema/output_contract.py` 声明算法的输出结构：
 
@@ -350,7 +420,8 @@ aw.write_scalar(
 )
 ```
 
-### 5. 创建算法清单
+<a id="quickstart-manifest"></a>
+### 2.6 创建算法清单
 
 创建 `manifest.json` — 这是**打包、导入、发布的唯一标准清单**：
 
@@ -374,10 +445,11 @@ aw.write_scalar(
   "files": {
     "paramsSchemaPath": "dist/params.schema.json",
     "outputContractPath": "dist/output_contract.json",
+    "dsPath": "dist/ds.json",
     "drsPath": "dist/drs.json"
   },
   "requires": {
-    "sdk": "0.1.1",
+    "sdk": "0.1.3",
     "core": "1.0.0"
   },
   "repository": "https://github.com/example/my-algorithm",
@@ -402,7 +474,7 @@ aw.write_scalar(
 | `authors[].organization` | 否 | string | 1-256 字符 | 所属组织 |
 | `contractVersion` | **是** | string | SemVer 格式 | 输出合约版本 (如 `1.0.0`) |
 | `codeVersion` | **是** | string | - | 代码版本 (用作算法版本标识) |
-| `files` | 否 | object | - | 产物文件路径 (见下表) |
+| `files` | **是** | object | - | 产物文件路径 (见下表) |
 | `requires` | 否 | object | - | 兼容性要求 |
 | `requires.sdk` | 否 | string | SemVer 格式 | SDK 最低版本 |
 | `requires.core` | 否 | string | SemVer 格式 | Core 最低版本 |
@@ -414,27 +486,20 @@ aw.write_scalar(
 
 `files` 用于指定编译产物的位置，导入时 SDK 根据此字段定位文件：
 
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `files.paramsSchemaPath` | `"params.schema.json"` | 参数 JSON Schema 路径 |
-| `files.drsPath` | `"drs.json"` | DRS 文件路径 |
-| `files.outputContractPath` | `"output_contract.json"` | 输出合约路径 |
+| 字段 | 说明 |
+|------|------|
+| `files.paramsSchemaPath` | 参数 JSON Schema 路径（导入阶段必需） |
+| `files.dsPath` | DS 文件路径（导出阶段会自动补齐） |
+| `files.drsPath` | DRS 文件路径（导出阶段会自动补齐） |
+| `files.outputContractPath` | 输出合约路径（建议提供；缺失时运行阶段可跳过合约校验） |
 
 **路径规则:**
 - 所有路径均为**相对于算法包根目录**的路径
+- SDK 导入最低要求是 `files.paramsSchemaPath`
+- `files.dsPath` / `files.drsPath` / `files.outputContractPath` 可选（建议提供）
 - 推荐使用 `dist/` 前缀 (如 `dist/params.schema.json`)
-- 如果省略 `files`，SDK 会在根目录查找默认文件名
 
-#### algorithm.json vs manifest.json
-
-| 文件 | 状态 | 用途 |
-|------|------|------|
-| `manifest.json` | **标准** | 打包、导入、发布的唯一标准清单 |
-| `algorithm.json` | 辅助 (可选) | 仅开发态辅助文件，供 IDE/工具链使用 |
-
-> **建议**: 只维护 `manifest.json`，无需创建 `algorithm.json`。
-
-#### 算法包必须包含的文件
+#### 导入阶段：SDK 最小算法包要求
 
 导入算法包 (zip 或目录) 时，SDK 验证以下文件:
 
@@ -443,27 +508,43 @@ aw.write_scalar(
 | `main.py` | **是** | 算法入口文件，必须包含 `run(ctx)` 函数 |
 | `manifest.json` | **是** | 算法清单 (含 `files.*Path` 字段) |
 | `dist/params.schema.json` | **是** | 参数 JSON Schema (路径由 `files.paramsSchemaPath` 指定) |
-| `dist/drs.json` | **是** | 数据需求规格 (路径由 `files.drsPath` 指定) |
-| `dist/output_contract.json` | **是** | 输出合约 (路径由 `files.outputContractPath` 指定) |
+| `dist/ds.json` | 否 | 数据规格（通常在导出阶段从 Bundle 注入） |
+| `dist/drs.json` | 否 | 数据需求规格（通常在导出阶段从 Bundle 注入） |
+| `dist/output_contract.json` | 否 | 输出合约（建议提供） |
 
-> **重要**: 文件实际位置由 `manifest.json` 的 `files.*Path` 字段决定，默认在 `dist/` 目录下。
+> **重要**: 文件实际位置由 `manifest.json` 的 `files.*Path` 字段决定。
 
-#### 常见导入失败原因
+#### 导入阶段常见失败原因
 
 1. **`manifest.json not found`**: 包内缺少 manifest.json，或 zip 解压后目录结构嵌套
 2. **`main.py not found`**: 入口文件缺失
 3. **`dist/params.schema.json not found`**: 未执行 `fraclab-sdk algo compile`
-4. **`dist/drs.json not found`**: 编译时未指定 `--bundle` 参数
 5. **`contractVersion must be semver-like`**: contractVersion 格式错误，应为 `x.y.z`
 6. **`authors must contain at least one author`**: authors 列表为空
 
-### 6. 项目结构
+#### 导出阶段要求（发布包）
+
+`fraclab-sdk algo export ...` 会要求完整 `dist` 产物：
+
+- `dist/params.schema.json`
+- `dist/output_contract.json`
+- `dist/ds.json`
+- `dist/drs.json`
+
+推荐使用：
+
+```bash
+fraclab-sdk algo export ./my-algorithm ./my-algorithm.zip --auto-compile --bundle /path/to/bundle
+```
+
+导出页会从所选 Bundle 注入 `ds/drs`，并自动补齐 `files.dsPath` / `files.drsPath`（若缺失）。
+
+### 2.6.1 项目结构
 
 完整的算法工作区结构：
 
 ```
 my-algorithm/
-├── algorithm.json          # 开发时元数据 (可选，编译时使用)
 ├── manifest.json           # 算法清单 (导出包必须)
 ├── main.py                 # 算法入口 (必须包含 run 函数)
 ├── schema/
@@ -475,6 +556,7 @@ my-algorithm/
 └── dist/                   # 编译产物 (自动生成)
     ├── params.schema.json  # 从 INPUT_SPEC 编译
     ├── output_contract.json # 从 OUTPUT_CONTRACT 编译
+    ├── ds.json             # 从 Bundle 复制
     └── drs.json            # 从 Bundle 复制
 ```
 
@@ -486,6 +568,7 @@ my-algorithm.zip/
 ├── main.py                 # 必须: 入口文件
 ├── dist/                   # 编译产物目录
 │   ├── params.schema.json  # 必须: 参数 Schema
+│   ├── ds.json             # 必须: 数据规格
 │   ├── drs.json            # 必须: 数据需求规格
 │   └── output_contract.json # 必须: 输出合约
 ├── schema/                 # 可选: schema 源码
@@ -495,33 +578,129 @@ my-algorithm.zip/
 └── README.md               # 可选: 说明文件
 ```
 
----
+<a id="quickstart-build-export"></a>
+### 2.7 用 Bundle 编译并导出算法包
 
-## Bundle 与 Snapshot
-
-Bundle 是平台提供的数据包，包含算法所需的输入数据和 DRS 规格。
-
-**算法开发者只需知道:**
-
-1. **Bundle 由平台/数据团队提供**，用户只需获取路径即可
-2. **不要修改 Bundle 内容** — 任何修改都会导致哈希校验失败
-3. **导入失败时使用验证命令排查**:
+推荐命令（单命令闭环）：
 
 ```bash
-# 验证 Bundle 完整性
+fraclab-sdk algo export ./my-algorithm ./my-algorithm.zip --auto-compile --bundle /path/to/bundle
+```
+
+为什么推荐这一条：
+
+1. 最终可导入运行的产物必须是包含 `dist/*.json` 的算法包
+2. `export` 只负责打包，不会凭空生成缺失的 `dist/*.json`
+3. `--auto-compile --bundle` 能在需要时先补齐 `dist/*.json`，再打包
+
+等价的两步写法（功能上成立，但更容易漏步骤）：
+
+```bash
+fraclab-sdk algo compile ./my-algorithm --bundle /path/to/bundle
+fraclab-sdk algo export ./my-algorithm ./my-algorithm.zip
+```
+
+注意：
+- 如果你已经有有效的 `dist/ds.json` 与 `dist/drs.json`，`compile` 可以不传 `--bundle`
+- 但对首次构建，通常都应显式传 `--bundle`
+
+<a id="quickstart-run"></a>
+### 2.8 导入并运行算法包
+
+```bash
+# 1) 导入 Bundle -> Snapshot
+fraclab-sdk snapshot import /path/to/bundle
+
+# 2) 导入算法 zip
+fraclab-sdk algo import ./my-algorithm.zip
+
+# 3) 创建并执行 run
+fraclab-sdk run create <snapshot_id> <algorithm_id> <version> --params params.json
+fraclab-sdk run exec <run_id> --timeout 300
+
+# 4) 查看结果
+fraclab-sdk results list <run_id>
+```
+
+<a id="quickstart-selection-runds"></a>
+### 2.9 `SelectionModel` 与 `run_ds` 的关系
+
+这是 run 侧最容易混淆的点：
+
+- `SelectionModel`：你给 SDK 的“选择意图”（基于 snapshot 索引选哪些 item）
+- `run_ds`：SDK 根据 selection 生成的“运行时 DataSpec 子集”（会重建为 0..N-1，并保留 `sourceItemIndex` 映射）
+
+关系链（代码路径）：
+
+1. `selection = SelectionModel.from_snapshot_and_drs(snapshot, algorithm.drs)`
+2. 你调用 `run_mgr.create_run(..., selection=selection, ...)`
+3. `create_run()` 内部调用 `selection.build_run_ds()`
+4. `Materializer` 用 `run_ds` 物化 `runs/<run_id>/input/`
+
+结论：
+- **SDK 调用方通常只需要管理 `SelectionModel`，不用手动传 `run_ds`**
+- `run_ds` 是运行前的内部物化输入模型；你可在调试/诊断时显式查看它
+
+---
+
+<a id="bundle-and-snapshot"></a>
+## 3. Bundle 与 Snapshot（概念与关系）
+
+### 3.1 Bundle 是什么
+
+Bundle 是平台提供的原始数据包目录，至少包含：
+
+- `manifest.json`
+- `ds.json`
+- `drs.json`
+- `data/`
+
+Bundle 的两个用途：
+
+1. 给算法编译提供 DS/DRS（拷贝到 `dist/ds.json`、`dist/drs.json`）
+2. 导入 SDK 后生成 Snapshot，供 run 选择与执行
+
+### 3.2 Snapshot 是什么
+
+Snapshot 是 Bundle 导入 SDK 后形成的内部快照副本（默认在 `~/.fraclab/snapshots/<snapshot_id>`）。
+
+- 导入命令：`fraclab-sdk snapshot import /path/to/bundle`
+- 运行时你用的是 `snapshot_id`，不是原始 bundle 路径
+- `run create` 阶段会基于 snapshot + selection 生成 run 输入
+
+### 3.3 Bundle / Snapshot / RunInput 的关系
+
+```text
+Bundle (原始数据包)
+  -> snapshot import
+Snapshot (SDK库内快照)
+  + SelectionModel (选中的 snapshot item 索引)
+  -> build_run_ds()
+Run Input (runs/<run_id>/input: ds.json/drs.json/data/)
+```
+
+其中 `run_ds` 是 “Run Input 里的 ds.json 对应对象”，不是 Bundle 的 `ds.json` 原样复制。
+
+### 3.4 为什么不能随便改 Bundle
+
+Snapshot 导入与校验依赖 `manifest.json` 中的哈希字段（`dsSha256`、`drsSha256`）。
+任何对 `ds.json`/`drs.json` 的手工修改都会触发校验失败。
+
+```bash
 fraclab-sdk validate bundle /path/to/bundle
 ```
 
-**常见导入错误:**
-- `ds.json hash mismatch`: Bundle 被修改或损坏
+常见错误：
+- `ds.json hash mismatch`: 文件被改动或损坏
 - `drs.json not found`: Bundle 不完整
 - `manifest.json not found`: 非有效 Bundle 目录
 
-> 详细的 Bundle 内部结构请参考 [附录 A: Bundle 结构详解](#附录-a-bundle-结构详解)
+> 详细目录与字段见 [11. 附录 A: Bundle 结构详解](#appendix-a-bundle-structure)
 
 ---
 
-## 算法开发详解
+<a id="algorithm-development-guide"></a>
+## 4. 算法开发详解
 
 ### DataClient - 读取输入数据
 
@@ -798,7 +977,8 @@ def run(ctx):
 
 ---
 
-## CLI 命令行工具
+<a id="cli-tools"></a>
+## 5. CLI 命令行工具
 
 安装后可使用 `fraclab-sdk` 命令。
 
@@ -875,7 +1055,7 @@ succeeded (exit_code=0)
 ```bash
 # 列出产出的制品
 $ fraclab-sdk results list f9e8d7c6
-Status: completed
+Status: succeeded
 accuracy    scalar
 summary     json      file:///Users/.../output/artifacts/summary.json
 report      blob      file:///Users/.../output/artifacts/report.pdf
@@ -924,14 +1104,14 @@ f9e8d7c6/
 
 ```json
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "1.0",
   "run": {
     "runId": "f9e8d7c6",
     "algorithmId": "my-algorithm",
     "contractVersion": "1.0.0",
     "codeVersion": "1.0.0"
   },
-  "status": "completed",
+  "status": "succeeded",
   "startedAt": "2024-01-15T12:00:00.000Z",
   "completedAt": "2024-01-15T12:00:05.123Z",
   "datasets": [
@@ -987,6 +1167,7 @@ fraclab-sdk algo compile ./my-algorithm --bundle /path/to/bundle
 # 生成:
 # - dist/params.schema.json (从 schema.inputspec:INPUT_SPEC)
 # - dist/output_contract.json (从 schema.output_contract:OUTPUT_CONTRACT)
+# - dist/ds.json (从 bundle 复制)
 # - dist/drs.json (从 bundle 复制)
 ```
 
@@ -1066,7 +1247,8 @@ fraclab-sdk --debug <command>
 
 ---
 
-## SDK 内部模块
+<a id="sdk-internal-modules"></a>
+## 6. SDK 内部模块
 
 以下模块供进阶使用或二次开发。
 
@@ -1309,7 +1491,8 @@ else:
 
 ---
 
-## 数据模型
+<a id="data-models"></a>
+## 7. 数据模型
 
 ### DRS (Data Requirement Specification)
 
@@ -1361,7 +1544,8 @@ all_artifacts = manifest.list_all_artifacts()
 
 ---
 
-## 错误处理
+<a id="error-handling"></a>
+## 8. 错误处理
 
 ### 异常类型
 
@@ -1413,7 +1597,8 @@ except FraclabError as e:
 
 ---
 
-## 安全特性
+<a id="security-features"></a>
+## 9. 安全特性
 
 SDK 内置多项安全机制：
 
@@ -1425,7 +1610,8 @@ SDK 内置多项安全机制：
 
 ---
 
-## 完整示例
+<a id="complete-examples"></a>
+## 10. 完整示例
 
 ### 算法开发完整流程
 
@@ -1500,7 +1686,8 @@ for art in reader.list_artifacts():
 
 ---
 
-## 附录 A: Bundle 结构详解
+<a id="appendix-a-bundle-structure"></a>
+## 11. 附录 A: Bundle 结构详解
 
 > 本节面向平台开发者或需要排查导入问题的用户。普通算法开发者无需了解这些细节。
 

@@ -631,7 +631,7 @@ except Exception as e:
 
 
 def validate_inputspec(workspace: Path) -> ValidationResult:
-    """Validate InputSpec (schema.inputspec:INPUT_SPEC, legacy CONFIG_MODEL).
+    """Validate InputSpec (schema.inputspec:INPUT_SPEC).
 
     Checks:
     - Schema can be generated

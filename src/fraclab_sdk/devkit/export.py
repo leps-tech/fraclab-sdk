@@ -5,6 +5,7 @@ Export creates a distributable algorithm package containing:
 - manifest.json (required)
 - dist/params.schema.json (required)
 - dist/output_contract.json (required)
+- dist/ds.json (required)
 - dist/drs.json (required)
 - README.md (optional)
 - schema/** (optional, source code)
@@ -24,6 +25,7 @@ from fraclab_sdk.errors import AlgorithmError
 REQUIRED_DIST_FILES = [
     "params.schema.json",
     "output_contract.json",
+    "ds.json",
     "drs.json",
 ]
 
@@ -39,6 +41,7 @@ INCLUDE_PATTERNS = [
     "manifest.json",
     "dist/params.schema.json",
     "dist/output_contract.json",
+    "dist/ds.json",
     "dist/drs.json",
     "README.md",
     "schema/**",

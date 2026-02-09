@@ -136,6 +136,7 @@ def algo_compile(
     Generates:
     - dist/params.schema.json (from schema.inputspec:INPUT_SPEC)
     - dist/output_contract.json (from schema.output_contract:OUTPUT_CONTRACT)
+    - dist/ds.json (from bundle)
     - dist/drs.json (from bundle)
     """
     from fraclab_sdk.devkit.compile import compile_algorithm
@@ -150,6 +151,7 @@ def algo_compile(
     typer.echo(f"Compiled algorithm workspace: {workspace}")
     typer.echo(f"  params.schema.json: {result.params_schema_path}")
     typer.echo(f"  output_contract.json: {result.output_contract_path}")
+    typer.echo(f"  ds.json: {result.ds_path}")
     typer.echo(f"  drs.json: {result.drs_path}")
     if result.bound_bundle:
         typer.echo(f"  Bound bundle hashes: {result.bound_bundle}")

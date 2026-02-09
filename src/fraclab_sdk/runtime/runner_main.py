@@ -100,10 +100,10 @@ class RunContext:
 
 
 def load_algorithm_module(algorithm_path: Path):
-    """Load algorithm.py as a module.
+    """Load algorithm entrypoint module (main.py) from a path.
 
     Args:
-        algorithm_path: Path to algorithm.py file.
+        algorithm_path: Path to main.py file.
 
     Returns:
         Loaded module.
@@ -154,7 +154,7 @@ def run_algorithm(run_dir: Path, algorithm_path: Path) -> int:
 
     Args:
         run_dir: The run directory.
-        algorithm_path: Path to algorithm.py.
+        algorithm_path: Path to main.py.
 
     Returns:
         Exit code (0 for success, 1 for failure).

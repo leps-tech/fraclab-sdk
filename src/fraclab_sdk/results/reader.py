@@ -77,14 +77,8 @@ class ResultReader:
         content = manifest_path.read_text()
         try:
             self._manifest = RunOutputManifest.model_validate_json(content)
-        except Exception:
-            # Legacy shape fallback: convert if possible
-            try:
-                data = json.loads(content)
-                data = self._coerce_legacy_manifest(data)
-                self._manifest = RunOutputManifest.model_validate(data)
-            except Exception as e:  # pragma: no cover - best effort
-                raise ResultError(f"Failed to parse output manifest: {e}") from e
+        except Exception as e:  # pragma: no cover - parse errors are propagated
+            raise ResultError(f"Failed to parse output manifest: {e}") from e
 
         return self._manifest
 
@@ -137,9 +131,9 @@ class ResultReader:
             Path to artifact file or None if no file URI.
         """
         artifact = self.get_artifact(artifact_key)
-        if artifact is None or artifact.fileUri is None:
+        if artifact is None or artifact.uri is None:
             return None
-        return file_uri_to_path(artifact.fileUri)
+        return file_uri_to_path(artifact.uri)
 
     def get_artifact_with_path(self, artifact_key: str) -> ArtifactWithPath | None:
         """Get artifact with resolved path.
@@ -155,8 +149,8 @@ class ResultReader:
             return None
 
         path = None
-        if artifact.fileUri:
-            path = file_uri_to_path(artifact.fileUri)
+        if artifact.uri:
+            path = file_uri_to_path(artifact.uri)
 
         return ArtifactWithPath(artifact=artifact, path=path)
 
@@ -173,11 +167,11 @@ class ResultReader:
         if artifact is None:
             return None
 
-        if artifact.artifactType not in {"json", "object"}:
+        if artifact.type not in {"json", "object"}:
             return None
 
-        if artifact.fileUri:
-            path = self._safe_artifact_path(file_uri_to_path(artifact.fileUri))
+        if artifact.uri:
+            path = self._safe_artifact_path(file_uri_to_path(artifact.uri))
             return json.loads(path.read_text())
 
         if artifact.inline and "data" in artifact.inline:
@@ -193,42 +187,6 @@ class ResultReader:
             raise ResultError(f"Artifact path escapes output dir: {path}")
         return path
 
-    def _coerce_legacy_manifest(self, data: dict) -> dict:
-        """
-        Convert legacy manifest shapes:
-        - top-level artifacts[] -> dataset 'artifacts' with items
-        - datasets[].artifacts[] -> datasets[].items with single artifact
-        """
-        datasets = data.get("datasets", [])
-        new_datasets = []
-        for ds in datasets:
-            if "items" in ds:
-                new_datasets.append(ds)
-                continue
-            artifacts = ds.get("artifacts", [])
-            items = []
-            for art in artifacts:
-                items.append(
-                    {
-                        "itemKey": art.get("artifactKey") or art.get("key"),
-                        "artifact": art,
-                    }
-                )
-            new_datasets.append({"datasetKey": ds.get("datasetKey") or ds.get("key"), "items": items})
-
-        # If legacy top-level artifacts
-        top_artifacts = data.get("artifacts", [])
-        if top_artifacts:
-            items = [
-                {"itemKey": art.get("artifactKey") or art.get("key"), "artifact": art}
-                for art in top_artifacts
-            ]
-            new_datasets.append({"datasetKey": "artifacts", "items": items})
-
-        data["datasets"] = new_datasets
-        data.pop("artifacts", None)
-        return data
-
     def read_artifact_scalar(self, artifact_key: str):
         """Read scalar artifact value.
 
@@ -242,7 +200,7 @@ class ResultReader:
         if artifact is None:
             return None
 
-        if artifact.artifactType != "scalar":
+        if artifact.type != "scalar":
             return None
 
         return artifact.value
@@ -293,10 +251,10 @@ class ResultReader:
         if artifact is None:
             raise ResultError(f"Artifact not found: {artifact_key}")
 
-        if artifact.fileUri is None:
+        if artifact.uri is None:
             raise ResultError(f"Artifact '{artifact_key}' has no file URI (may be a scalar)")
 
-        path = file_uri_to_path(artifact.fileUri)
+        path = file_uri_to_path(artifact.uri)
 
         # Validate path is within output directory
         self._validate_path_containment(path)

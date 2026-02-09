@@ -1,9 +1,9 @@
-"""Algorithm manifest specification (FracLabAlgorithmManifestV1)."""
+"""Algorithm manifest model (manifest.json for algorithm packages)."""
 
 from __future__ import annotations
 
 import re
-from typing import Annotated, List, Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
@@ -43,6 +43,17 @@ class Compatibility(BaseModel):
         return self
 
 
+class ManifestFiles(BaseModel):
+    """Artifact file pointers in algorithm manifest."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    paramsSchemaPath: NonEmptyStr
+    outputContractPath: NonEmptyStr | None = None
+    drsPath: NonEmptyStr | None = None
+    dsPath: NonEmptyStr | None = None
+
+
 class FracLabAlgorithmManifestV1(BaseModel):
     """Minimal but complete algorithm manifest."""
 
@@ -55,12 +66,13 @@ class FracLabAlgorithmManifestV1(BaseModel):
     summary: NonEmptyStr
 
     notes: Optional[str] = None
-    tags: Optional[List[NonEmptyStr]] = None
+    tags: Optional[list[NonEmptyStr]] = None
 
-    authors: List[Author]
+    authors: list[Author]
 
     contractVersion: NonEmptyStr
     codeVersion: NonEmptyStr
+    files: ManifestFiles
 
     requires: Optional[Compatibility] = None
 
@@ -84,6 +96,7 @@ class FracLabAlgorithmManifestV1(BaseModel):
 __all__ = [
     "ManifestVersion",
     "FracLabAlgorithmManifestV1",
+    "ManifestFiles",
     "Author",
     "Compatibility",
 ]

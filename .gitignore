@@ -8,7 +8,20 @@
 !src/
 !src/**
 
+# Exclude generated Python cache under src
+src/**/__pycache__/
+src/**/*.pyc
+
 # Keep package/release metadata docs
 !pyproject.toml
 !README.md
 !CHANGELOG.md
+
+# Keep GitHub Actions workflow for automated PyPI publish
+!.github/
+!.github/workflows/
+!.github/workflows/**
+
+# Keep release helper script
+!scripts/
+!scripts/release.sh

@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.3
+
+### Workbench & Packaging
+- Export page now previews selected bundle `ds.json` and `drs.json` in separate fixed-height tabs.
+- Build/export flow now injects bundle `ds.json` and `drs.json` into algorithm package output and auto-fills missing `files.dsPath` / `files.drsPath` during export.
+- New algorithm scaffold / single-`py` import no longer pre-generates empty `dist/drs.json`; `drs` is filled at export time.
+- Browse page removes low-signal dataset summary card and redundant divider under dataset tabs for cleaner navigation.
+- Run page number parameter precision now follows schema `step`:
+  - with `step`: decimal precision derived from `step`
+  - without `step`: integer-style display (no decimal places)
+
+### Manifest Tolerance (Import Path)
+- Relaxed algorithm manifest file pointer strictness for import path:
+  - `files.outputContractPath`, `files.dsPath`, `files.drsPath` are optional
+  - `files.paramsSchemaPath` remains required
+- Missing `drsPath` now falls back to empty DRS in algorithm handle, allowing selection model to infer datasets from snapshot.
+
+### Release & CI
+- CI publish guard: Git tag version must match both `pyproject.toml` and `src/fraclab_sdk/version.py`, otherwise PyPI publish fails fast.
+- Add `scripts/release.sh` for one-command version bump (and optional commit/tag/push) to reduce manual release mistakes.
+
 ## 0.1.2
 
 ### Validation System Upgrade
@@ -28,10 +49,15 @@
   - Export blocked when validation errors exist
 
 ### Other Changes
+- Snapshot selector display is now unified in Browse/Selection/Export pages as "snapshot_id - imported_at" for easier management.
+- Snapshot timestamps in selectors are normalized to second precision (`YYYY-MM-DD HH:MM:SS`) without ISO `T` separator.
+- Browse page dataset explorer switched from single-select dropdown to dataset tabs so all dataset options are visible by default.
+- Browse page dataset tabs get stronger visual affordance for click-switching; NDJSON line expanders default to expanded.
 - Export page: Replace "File Status" with "Validation Status" as the primary integrity check; File Inspector in expander (expanded by default); Revalidate button inline with status badges.
 - Schema/Output Edit pages: Show warnings even when validation passes; fix incorrect path passed to `validate_output_contract`.
 - Single .py file import: Now creates full template structure (`schema/`, `dist/`) matching "Create New Algorithm".
 - Algorithm scaffold: Now creates `dist/output_contract.json` template.
+- Snapshot/Algorithm import now auto-focuses and expands the newly imported entry in the management list.
 - Flatten exported algorithm zip structure (no top-level version folder in Workbench export).
 - Manifest defaults: add `requires.sdk`, `repository`, `homepage`, `license` to scaffolds and bundled examples.
 - Workbench Run/Results pages prompt users to use the InputSpec/OutputSpec editor Validate actions when UI or artifacts are missing.

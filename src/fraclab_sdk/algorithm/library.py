@@ -11,7 +11,7 @@ from typing import Any
 from fraclab_sdk.config import SDKConfig
 from fraclab_sdk.errors import AlgorithmError, PathTraversalError
 from fraclab_sdk.models import DRS
-from fraclab_sdk.specs.manifest import FracLabAlgorithmManifestV1
+from fraclab_sdk.models.algorithm_manifest import FracLabAlgorithmManifestV1
 from fraclab_sdk.utils.io import atomic_write_json
 
 
@@ -50,7 +50,6 @@ class AlgorithmHandle:
         self._manifest: FracLabAlgorithmManifestV1 | None = None
         self._drs: DRS | None = None
         self._params_schema: dict | None = None
-        self._manifest_data: dict[str, Any] | None = None
 
     @property
     def directory(self) -> Path:
@@ -64,24 +63,17 @@ class AlgorithmHandle:
             manifest_path = self._dir / "manifest.json"
             if not manifest_path.exists():
                 raise AlgorithmError(f"manifest.json not found: {manifest_path}")
-            data = json.loads(manifest_path.read_text())
-            self._manifest = FracLabAlgorithmManifestV1.model_validate(data)
-            self._manifest_data = data
+            self._manifest = FracLabAlgorithmManifestV1.model_validate_json(
+                manifest_path.read_text()
+            )
         return self._manifest
 
-    def _resolve_manifest_file(self, files_key: str, default_rel: str) -> Path:
-        """
-        Resolve a file path declared in manifest.json under `files.*`.
-        Fallback to `default_rel` for backward compatibility.
-        """
-        if self._manifest_data is None:
-            _ = self.manifest  # loads manifest and manifest_data
-        files = self._manifest_data.get("files") or {}
-        rel = files.get(files_key, default_rel)
+    def _resolve_manifest_file(self, rel: str, field_name: str) -> Path:
+        """Resolve and validate a file path declared in manifest.json under files.*."""
         if not isinstance(rel, str) or not rel:
-            raise AlgorithmError(f"Invalid manifest.files.{files_key}: {rel!r}")
+            raise AlgorithmError(f"Invalid manifest.files.{field_name}: {rel!r}")
         if not _is_safe_path(rel):
-            raise AlgorithmError(f"Unsafe manifest path files.{files_key}: {rel}")
+            raise AlgorithmError(f"Unsafe manifest path files.{field_name}: {rel}")
         p = (self._dir / rel).resolve()
         if not p.exists():
             raise AlgorithmError(f"{rel} not found: {p}")
@@ -91,15 +83,22 @@ class AlgorithmHandle:
     def drs(self) -> DRS:
         """Get data requirement specification."""
         if self._drs is None:
-            drs_path = self._resolve_manifest_file("drsPath", "drs.json")
-            self._drs = DRS.model_validate_json(drs_path.read_text(encoding="utf-8"))
+            drs_rel = self.manifest.files.drsPath
+            if not drs_rel:
+                # Missing drsPath is allowed for minimal packages; selection will infer from snapshot.
+                self._drs = DRS(schemaVersion="1.0", datasets=[])
+            else:
+                drs_path = self._resolve_manifest_file(drs_rel, "drsPath")
+                self._drs = DRS.model_validate_json(drs_path.read_text(encoding="utf-8"))
         return self._drs
 
     @property
     def params_schema(self) -> dict[str, Any]:
         """Get parameters JSON schema."""
         if self._params_schema is None:
-            schema_path = self._resolve_manifest_file("paramsSchemaPath", "params.schema.json")
+            schema_path = self._resolve_manifest_file(
+                self.manifest.files.paramsSchemaPath, "paramsSchemaPath"
+            )
             self._params_schema = json.loads(schema_path.read_text(encoding="utf-8"))
         return self._params_schema
 
@@ -271,15 +270,31 @@ class AlgorithmLibrary:
         manifest = FracLabAlgorithmManifestV1.model_validate_json(manifest_path.read_text())
 
         # Validate files referenced in manifest.json exist
-        manifest_data = json.loads(manifest_path.read_text())
-        files_section = manifest_data.get("files", {})
+        required_files = [
+            ("paramsSchemaPath", manifest.files.paramsSchemaPath),
+        ]
+        optional_files = [
+            ("outputContractPath", manifest.files.outputContractPath),
+            ("dsPath", manifest.files.dsPath),
+            ("drsPath", manifest.files.drsPath),
+        ]
 
-        # Check required file references
-        for key, default_path in [
-            ("paramsSchemaPath", "params.schema.json"),
-            ("drsPath", "drs.json"),
-        ]:
-            file_path_str = files_section.get(key, default_path)
+        for field_name, file_path_str in required_files:
+            if not _is_safe_path(file_path_str):
+                raise AlgorithmError(
+                    f"Unsafe manifest path files.{field_name}: {file_path_str}"
+                )
+            file_path = source_dir / file_path_str
+            if not file_path.exists():
+                raise AlgorithmError(f"{file_path_str} not found in {source_dir}")
+
+        for field_name, file_path_str in optional_files:
+            if not file_path_str:
+                continue
+            if not _is_safe_path(file_path_str):
+                raise AlgorithmError(
+                    f"Unsafe manifest path files.{field_name}: {file_path_str}"
+                )
             file_path = source_dir / file_path_str
             if not file_path.exists():
                 raise AlgorithmError(f"{file_path_str} not found in {source_dir}")

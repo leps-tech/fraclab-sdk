@@ -17,7 +17,7 @@ def preview_scalar(artifact: ArtifactInfo) -> Any:
     Returns:
         The scalar value or None.
     """
-    if artifact.artifactType != "scalar":
+    if artifact.type != "scalar":
         return None
     return artifact.value
 
@@ -31,14 +31,14 @@ def preview_image(artifact: ArtifactInfo) -> Path | None:
     Returns:
         Path to image file or None if not an image.
     """
-    if artifact.artifactType != "blob":
+    if artifact.type != "blob":
         return None
 
     if artifact.mimeType and not artifact.mimeType.startswith("image/"):
         return None
 
-    if artifact.fileUri:
-        return file_uri_to_path(artifact.fileUri)
+    if artifact.uri:
+        return file_uri_to_path(artifact.uri)
 
     return None
 
@@ -55,13 +55,13 @@ def preview_json_table(artifact: ArtifactInfo) -> dict | None:
     Returns:
         Table data dict or None if not suitable for table display.
     """
-    if artifact.artifactType not in {"json", "object"}:
+    if artifact.type not in {"json", "object"}:
         return None
 
-    if not artifact.fileUri:
+    if not artifact.uri:
         return None
 
-    path = file_uri_to_path(artifact.fileUri)
+    path = file_uri_to_path(artifact.uri)
     data = json.loads(path.read_text())
 
     # Handle array of objects
@@ -97,13 +97,13 @@ def preview_json_raw(artifact: ArtifactInfo, max_lines: int = 50) -> str | None:
     Returns:
         Pretty-printed JSON string or None.
     """
-    if artifact.artifactType != "json":
+    if artifact.type != "json":
         return None
 
-    if not artifact.fileUri:
+    if not artifact.uri:
         return None
 
-    path = file_uri_to_path(artifact.fileUri)
+    path = file_uri_to_path(artifact.uri)
     data = json.loads(path.read_text())
     formatted = json.dumps(data, indent=2)
 
@@ -124,19 +124,19 @@ def get_artifact_preview_type(artifact: ArtifactInfo) -> str:
     Returns:
         Preview type: "scalar", "image", "json_table", "json_raw", "file", or "none".
     """
-    if artifact.artifactType == "scalar":
+    if artifact.type == "scalar":
         return "scalar"
 
-    if artifact.artifactType == "blob":
+    if artifact.type == "blob":
         if artifact.mimeType and artifact.mimeType.startswith("image/"):
             return "image"
         return "file"
 
-    if artifact.artifactType in {"json", "object"}:
+    if artifact.type in {"json", "object"}:
         # Check if suitable for table display
-        if artifact.fileUri:
+        if artifact.uri:
             try:
-                path = file_uri_to_path(artifact.fileUri)
+                path = file_uri_to_path(artifact.uri)
                 data = json.loads(path.read_text())
                 if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                     return "json_table"
@@ -144,7 +144,7 @@ def get_artifact_preview_type(artifact: ArtifactInfo) -> str:
                 pass
         return "json_raw"
 
-    if artifact.artifactType in {"frame", "parquet"}:
+    if artifact.type in {"frame", "parquet"}:
         return "file"
 
     return "none"

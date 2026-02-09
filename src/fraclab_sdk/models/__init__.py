@@ -1,5 +1,12 @@
 """Data models for SDK."""
 
+from fraclab_sdk.models.algorithm_manifest import (
+    Author,
+    Compatibility,
+    FracLabAlgorithmManifestV1,
+    ManifestFiles,
+    ManifestVersion,
+)
 from fraclab_sdk.models.bundle_manifest import (
     BundleManifest,
     DatasetEntry,
@@ -17,6 +24,12 @@ from fraclab_sdk.models.output_contract import (
     OutputSchema,
     ScalarOutputSchema,
 )
+from fraclab_sdk.models.output_spec import (
+    BlobSchema,
+    FrameSchema,
+    ObjectSchema,
+    ScalarSchema,
+)
 from fraclab_sdk.models.run_output_manifest import (
     ArtifactInfo,
     OwnerRef,
@@ -27,6 +40,11 @@ from fraclab_sdk.models.run_output_manifest import (
 )
 
 __all__ = [
+    "ManifestVersion",
+    "FracLabAlgorithmManifestV1",
+    "ManifestFiles",
+    "Author",
+    "Compatibility",
     "BundleManifest",
     "DatasetEntry",
     "DatasetEntryFile",
@@ -43,6 +61,10 @@ __all__ = [
     "BlobOutputSchema",
     "OutputContract",
     "OutputDatasetContract",
+    "BlobSchema",
+    "ObjectSchema",
+    "ScalarSchema",
+    "FrameSchema",
     "ArtifactInfo",
     "OwnerRef",
     "RunInfo",

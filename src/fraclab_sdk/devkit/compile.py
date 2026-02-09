@@ -3,7 +3,7 @@
 Compile workflow:
 1. Import schema.inputspec:INPUT_SPEC → model_json_schema() → dist/params.schema.json
 2. Import schema.output_contract:OUTPUT_CONTRACT → model_dump() → dist/output_contract.json
-3. Copy drs.json from bundle → dist/drs.json
+3. Copy ds.json and drs.json from bundle → dist/ds.json + dist/drs.json
 4. Update manifest.json with files pointers
 """
 
@@ -39,6 +39,7 @@ class CompileResult:
 
     params_schema_path: Path
     output_contract_path: Path
+    ds_path: Path
     drs_path: Path
     manifest_updated: bool
     bound_bundle: dict[str, str] | None = None
@@ -210,15 +211,16 @@ def compile_algorithm(
     """Compile algorithm workspace to generate static artifacts.
 
     This generates:
-    - dist/params.schema.json (from schema.inputspec:CONFIG_MODEL)
+    - dist/params.schema.json (from schema.inputspec:INPUT_SPEC)
     - dist/output_contract.json (from schema.output_contract:OUTPUT_CONTRACT)
+    - dist/ds.json (copied from bundle)
     - dist/drs.json (copied from bundle)
 
     And updates manifest.json with files pointers.
 
     Args:
         workspace: Path to algorithm workspace directory.
-        bundle_path: Path to data bundle (for drs.json). If None, drs.json must exist.
+    bundle_path: Path to data bundle (for ds.json and drs.json). If None, both must exist.
         skip_inputspec: Skip InputSpec compilation (use existing params.schema.json).
         skip_output_contract: Skip OutputContract compilation.
 
@@ -277,7 +279,8 @@ def compile_algorithm(
             json.dumps(output_contract, indent=2), encoding="utf-8"
         )
 
-    # 3. Copy drs.json from bundle (or use existing)
+    # 3. Copy ds.json + drs.json from bundle (or use existing)
+    ds_path = dist_dir / "ds.json"
     drs_path = dist_dir / "drs.json"
     bound_bundle: dict[str, str] | None = None
 
@@ -290,9 +293,13 @@ def compile_algorithm(
         bundle_ds = bundle_path / "ds.json"
         bundle_manifest = bundle_path / "manifest.json"
 
+        if not bundle_ds.exists():
+            raise AlgorithmError(f"ds.json not found in bundle: {bundle_path}")
         if not bundle_drs.exists():
             raise AlgorithmError(f"drs.json not found in bundle: {bundle_path}")
 
+        # Copy ds.json (raw bytes to preserve hash)
+        shutil.copy2(bundle_ds, ds_path)
         # Copy drs.json (raw bytes to preserve hash)
         shutil.copy2(bundle_drs, drs_path)
 
@@ -302,17 +309,14 @@ def compile_algorithm(
                 manifest = json.loads(bundle_manifest.read_text())
                 spec_files = manifest.get("specFiles", {})
                 bound_bundle = {
+                    "dsSha256": spec_files.get("dsSha256") or _compute_file_hash(bundle_ds),
                     "drsSha256": spec_files.get("drsSha256") or _compute_file_hash(bundle_drs),
                 }
-                if bundle_ds.exists():
-                    bound_bundle["dsSha256"] = spec_files.get("dsSha256") or _compute_file_hash(
-                        bundle_ds
-                    )
             except (json.JSONDecodeError, KeyError):
                 pass
-    elif not drs_path.exists():
+    elif not ds_path.exists() or not drs_path.exists():
         raise AlgorithmError(
-            "drs.json not found in dist/. Provide --bundle to copy from bundle."
+            "dist/ds.json or dist/drs.json not found. Provide --bundle to copy from bundle."
         )
 
     # 4. Update manifest.json with files pointers
@@ -321,6 +325,7 @@ def compile_algorithm(
     files = manifest.get("files", {})
     files["paramsSchemaPath"] = "dist/params.schema.json"
     files["outputContractPath"] = "dist/output_contract.json"
+    files["dsPath"] = "dist/ds.json"
     files["drsPath"] = "dist/drs.json"
     manifest["files"] = files
 
@@ -333,6 +338,7 @@ def compile_algorithm(
     return CompileResult(
         params_schema_path=params_schema_path,
         output_contract_path=output_contract_path,
+        ds_path=ds_path,
         drs_path=drs_path,
         manifest_updated=True,
         bound_bundle=bound_bundle,

@@ -19,6 +19,7 @@ from fraclab_sdk.devkit import (
 )
 from fraclab_sdk.snapshot import SnapshotLibrary
 from fraclab_sdk.workbench import ui_styles
+from fraclab_sdk.workbench.utils import format_snapshot_option
 
 st.set_page_config(page_title="Export Algorithm", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
 st.title("Export Algorithm")
@@ -82,6 +83,7 @@ algo_dir = handle.directory
 manifest_path = algo_dir / "manifest.json"
 params_schema_path = algo_dir / "dist" / "params.schema.json"
 output_contract_path = algo_dir / "dist" / "output_contract.json"
+ds_path = algo_dir / "dist" / "ds.json"
 drs_path = algo_dir / "dist" / "drs.json"
 
 # ==========================================
@@ -261,12 +263,18 @@ if all_issues:
 # File Inspector
 with st.expander("📂 File Inspector", expanded=True):
     tab_man, tab_in, tab_out = st.tabs(["Manifest", "Input Spec", "Output Spec"])
+    inspector_height = 320
 
     def _show_json_preview(path: Path):
         if path.exists():
             try:
                 data = json.loads(path.read_text())
-                st.code(json.dumps(data, indent=2, ensure_ascii=False), language="json", line_numbers=True)
+                st.code(
+                    json.dumps(data, indent=2, ensure_ascii=False),
+                    language="json",
+                    line_numbers=True,
+                    height=inspector_height,
+                )
             except Exception:
                 st.error("Failed to parse JSON")
         else:
@@ -278,24 +286,27 @@ with st.expander("📂 File Inspector", expanded=True):
 
 
 # ==========================================
-# 3. DRS Source Selection
+# 3. DS/DRS Source Selection
 # ==========================================
-st.subheader("3. Select DRS Source")
+st.subheader("3. Select DS/DRS Source")
 
 snapshots = snap_lib.list_snapshots()
 snapshot_map = {s.snapshot_id: s for s in snapshots}
 
 if not snapshots:
-    st.warning("No snapshots available. Import a snapshot first to provide DRS for export.")
+    st.warning("No snapshots available. Import a snapshot first to provide DS/DRS for export.")
     st.stop()
 
 with st.container(border=True):
-    st.caption("The DRS (Data Requirement Specification) defines dataset requirements. Select a snapshot to use its DRS in the export package.")
+    st.caption(
+        "Select a snapshot to provide DS/DRS (dist/ds.json and dist/drs.json) "
+        "for the export package."
+    )
 
     selected_snapshot_id = st.selectbox(
-        "Snapshot (DRS Source)",
+        "Snapshot (DS/DRS Source)",
         options=list(snapshot_map.keys()),
-        format_func=lambda x: f"{x} — {snapshot_map[x].bundle_id}",
+        format_func=lambda x: format_snapshot_option(snapshot_map[x]),
         label_visibility="collapsed"
     )
 
@@ -303,6 +314,34 @@ if not selected_snapshot_id:
     st.stop()
 
 snapshot_handle = snap_lib.get_snapshot(selected_snapshot_id)
+bundle_ds_path = snapshot_handle.directory / snapshot_handle.manifest.specFiles.dsPath
+bundle_drs_path = snapshot_handle.directory / snapshot_handle.manifest.specFiles.drsPath
+
+with st.container(border=True):
+    st.caption("Selected Bundle DS/DRS Preview")
+    tab_bundle_ds, tab_bundle_drs = st.tabs(["Bundle ds.json", "Bundle drs.json"])
+    preview_height = 320
+
+    def _show_bundle_spec(path: Path) -> None:
+        if not path.exists():
+            st.error(f"File not found: {path.name}")
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            st.error(f"Failed to parse JSON: {e}")
+            return
+        st.code(
+            json.dumps(data, indent=2, ensure_ascii=False),
+            language="json",
+            line_numbers=True,
+            height=preview_height,
+        )
+
+    with tab_bundle_ds:
+        _show_bundle_spec(bundle_ds_path)
+    with tab_bundle_drs:
+        _show_bundle_spec(bundle_drs_path)
 
 # ==========================================
 # 4. Export
@@ -325,6 +364,8 @@ def build_zip() -> bytes:
             files["outputContractPath"] = "dist/output_contract.json"
         if params_schema_path.exists():
             files["paramsSchemaPath"] = "dist/params.schema.json"
+        if ds_path.exists():
+            files["dsPath"] = "dist/ds.json"
         if drs_path.exists():
             files["drsPath"] = "dist/drs.json"
 
@@ -334,19 +375,37 @@ def build_zip() -> bytes:
         (target_root / "manifest.json").write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
 
         # DRS Override Logic
-        # Try to find DRS path from manifest, default to dist/drs.json
-        drs_rel_path = manifest_data.get("files", {}).get("drsPath", "dist/drs.json")
+        files_section = manifest_data.get("files")
+        if not isinstance(files_section, dict):
+            raise ValueError("manifest.json missing required files section")
+        if not isinstance(files_section.get("dsPath"), str) or not files_section.get("dsPath"):
+            files_section["dsPath"] = "dist/ds.json"
+        if not isinstance(files_section.get("drsPath"), str) or not files_section.get("drsPath"):
+            files_section["drsPath"] = "dist/drs.json"
+        drs_rel_path = files_section.get("drsPath")
+        if not isinstance(drs_rel_path, str) or not drs_rel_path:
+            raise ValueError("manifest.json missing required files.drsPath")
+        ds_rel_path = files_section.get("dsPath")
+        if not isinstance(ds_rel_path, str) or not ds_rel_path:
+            raise ValueError("manifest.json missing required files.dsPath")
+        target_ds_path = target_root / ds_rel_path
+        target_ds_path.parent.mkdir(parents=True, exist_ok=True)
         target_drs_path = target_root / drs_rel_path
         target_drs_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Read DRS from Snapshot
-        snap_drs_path = snapshot_handle.directory / snapshot_handle.manifest.specFiles.drsPath
+        # Read DS/DRS from Snapshot
+        snap_ds_path = bundle_ds_path
+        snap_drs_path = bundle_drs_path
+
+        if snap_ds_path.exists():
+            target_ds_path.write_bytes(snap_ds_path.read_bytes())
+        else:
+            raise ValueError("Selected snapshot is missing ds.json")
 
         if snap_drs_path.exists():
             target_drs_path.write_bytes(snap_drs_path.read_bytes())
         else:
-            # Fallback if snapshot DRS is missing structure (rare)
-            pass
+            raise ValueError("Selected snapshot is missing drs.json")
 
         # Zip it up (flattened: no top-level version folder)
         zip_buf = io.BytesIO()

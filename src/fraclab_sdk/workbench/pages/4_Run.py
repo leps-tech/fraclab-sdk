@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 from typing import Any, Dict
+from decimal import Decimal, InvalidOperation
 
 import streamlit as st
 
@@ -56,6 +57,30 @@ def _is_compact_field(schema: dict) -> bool:
         return True
     return False
 
+
+def _resolve_number_step_and_format(schema: dict) -> tuple[float, str]:
+    """Resolve number widget step/format from schema.step.
+
+    Rules:
+    - If schema.step exists and is valid, use it and derive decimal places from it.
+    - If schema.step is missing/invalid, default to integer-style display.
+    """
+    raw_step = schema.get("step")
+    if raw_step is None:
+        return 1.0, "%.0f"
+
+    try:
+        step_decimal = Decimal(str(raw_step))
+    except (InvalidOperation, ValueError, TypeError):
+        return 1.0, "%.0f"
+
+    if step_decimal <= 0:
+        return 1.0, "%.0f"
+
+    # Decimal exponent: -3 means 3 decimal places.
+    decimals = max(0, -step_decimal.normalize().as_tuple().exponent)
+    return float(step_decimal), f"%.{decimals}f"
+
 def render_field_widget(key: str, schema: dict, value: Any, path: str) -> Any:
     """Render a single widget based on schema type."""
     ftype = schema.get("type")
@@ -72,7 +97,15 @@ def render_field_widget(key: str, schema: dict, value: Any, path: str) -> Any:
     
     if ftype == "number":
         val = value if value is not None else default_val
-        return st.number_input(title, value=float(val or 0.0), help=help_text, key=path)
+        step, number_format = _resolve_number_step_and_format(schema)
+        return st.number_input(
+            title,
+            value=float(val or 0.0),
+            step=step,
+            format=number_format,
+            help=help_text,
+            key=path,
+        )
     
     if ftype == "integer":
         val = value if value is not None else default_val

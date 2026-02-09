@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from fraclab_sdk.algorithm import AlgorithmLibrary
 from fraclab_sdk.config import SDKConfig
@@ -27,6 +28,48 @@ config.ensure_dirs()
 WORKSPACE_ROOT = get_workspace_dir(config)
 snapshot_lib = SnapshotLibrary(config)
 algorithm_lib = AlgorithmLibrary(config)
+
+FOCUS_SNAPSHOT_KEY = "snapshots_page_focus_snapshot_id"
+FOCUS_ALGO_KEY = "snapshots_page_focus_algorithm_key"
+SCROLL_TARGET_KEY = "snapshots_page_scroll_target"
+FLASH_MESSAGE_KEY = "snapshots_page_flash_message"
+
+
+def _set_snapshot_focus(snapshot_id: str) -> None:
+    st.session_state[FOCUS_SNAPSHOT_KEY] = snapshot_id
+
+
+def _set_algorithm_focus(algorithm_id: str, version: str) -> None:
+    st.session_state[FOCUS_ALGO_KEY] = f"{algorithm_id}:{version}"
+
+
+def _set_ui_feedback(message: str, scroll_target: str | None = None) -> None:
+    """Store one-shot message/scroll target for the next rerun."""
+    st.session_state[FLASH_MESSAGE_KEY] = message
+    if scroll_target:
+        st.session_state[SCROLL_TARGET_KEY] = scroll_target
+
+
+def _emit_scroll_to_element(element_id: str) -> None:
+    """Best-effort browser scroll to an element id."""
+    components.html(
+        f"""
+<script>
+const targetId = {element_id!r};
+let tries = 0;
+const timer = setInterval(() => {{
+  const el = parent.document.getElementById(targetId);
+  if (el) {{
+    el.scrollIntoView({{ behavior: "smooth", block: "start" }});
+    clearInterval(timer);
+  }}
+  tries += 1;
+  if (tries > 20) clearInterval(timer);
+}}, 80);
+</script>
+""",
+        height=0,
+    )
 
 
 BASE_SCHEMA_UTILS = '''"""Schema base utilities for json_schema_extra helpers."""
@@ -121,7 +164,7 @@ def create_algorithm_scaffold(
         "tags": tags or None,
         "files": {
             "paramsSchemaPath": "dist/params.schema.json",
-            "drsPath": "dist/drs.json",
+            "dsPath": "dist/ds.json",
             "outputContractPath": "dist/output_contract.json",
         },
         "requires": {"sdk": SDK_VERSION},
@@ -134,7 +177,7 @@ def create_algorithm_scaffold(
 
     dist_dir = ws_dir / "dist"
     dist_dir.mkdir(parents=True, exist_ok=True)
-    (dist_dir / "drs.json").write_text(json.dumps({"datasets": []}, indent=2), encoding="utf-8")
+    (dist_dir / "ds.json").write_text(json.dumps({"datasets": []}, indent=2), encoding="utf-8")
     (dist_dir / "params.schema.json").write_text(
         json.dumps({"type": "object", "title": "Parameters", "properties": {}}, indent=2),
         encoding="utf-8",
@@ -148,13 +191,10 @@ def create_algorithm_scaffold(
 
 from __future__ import annotations
 
-from fraclab_sdk.runtime.data_client import DataClient
-
-
-def run(client: DataClient, params: dict) -> dict:
+def run(ctx) -> None:
     """Implement algorithm logic here."""
     # TODO: replace with real logic
-    return {"plots": [], "metrics": [], "diagnostics_zip": []}
+    ctx.logger.info("algorithm scaffold run")
 '''
     (ws_dir / "main.py").write_text(main_stub, encoding="utf-8")
 
@@ -292,7 +332,11 @@ def show_create_algo_dialog():
                     workspace_root=WORKSPACE_ROOT,
                 )
                 algo_id, version = algorithm_lib.import_algorithm(ws_dir)
-                st.success(f"Created and imported: {algo_id} v{version}")
+                _set_algorithm_focus(algo_id, version)
+                _set_ui_feedback(
+                    f"Created and imported: {algo_id} v{version}",
+                    scroll_target="imported-algorithms-anchor",
+                )
                 st.rerun()
             except FileExistsError as e:
                 st.error(str(e))
@@ -308,12 +352,18 @@ def show_edit_manifest_dialog(algo_id, version, manifest_path):
         st.error(f"Failed to load manifest: {e}")
         return
 
-    files_section = manifest_data.get("files") or {}
-    default_files = {
-        "paramsSchemaPath": files_section.get("paramsSchemaPath", "dist/params.schema.json"),
-        "drsPath": files_section.get("drsPath", "dist/drs.json"),
-        "outputContractPath": files_section.get("outputContractPath", "dist/output_contract.json"),
-    }
+    files_section = manifest_data.get("files")
+    if not isinstance(files_section, dict):
+        st.error("Invalid manifest: missing required files section")
+        return
+
+    required_file_keys = ("paramsSchemaPath", "outputContractPath")
+    if any(not isinstance(files_section.get(k), str) or not files_section.get(k) for k in required_file_keys):
+        st.error(
+            "Invalid manifest: files.paramsSchemaPath/"
+            "files.outputContractPath are required"
+        )
+        return
 
     with st.form(f"manifest_form_{algo_id}_{version}"):
         manifest_vals = render_manifest_fields(
@@ -339,7 +389,14 @@ def show_edit_manifest_dialog(algo_id, version, manifest_path):
             ] or [{"name": "unknown"}]
             manifest_data["notes"] = manifest_vals["notes"]
             manifest_data["tags"] = manifest_vals["tags"]
-            manifest_data["files"] = default_files
+            manifest_data["files"] = {
+                "paramsSchemaPath": files_section["paramsSchemaPath"],
+                "outputContractPath": files_section["outputContractPath"],
+            }
+            if isinstance(files_section.get("drsPath"), str) and files_section.get("drsPath"):
+                manifest_data["files"]["drsPath"] = files_section["drsPath"]
+            if isinstance(files_section.get("dsPath"), str) and files_section.get("dsPath"):
+                manifest_data["files"]["dsPath"] = files_section["dsPath"]
             manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
             st.success("Manifest saved successfully")
             st.rerun()
@@ -378,7 +435,11 @@ with st.container(border=True):
                             tmp_path = Path(tmp_file.name)
 
                         snapshot_id = snapshot_lib.import_snapshot(tmp_path)
-                        st.success(f"Imported: {snapshot_id}")
+                        _set_snapshot_focus(snapshot_id)
+                        _set_ui_feedback(
+                            f"Imported snapshot: {snapshot_id}",
+                            scroll_target="imported-snapshots-anchor",
+                        )
                         tmp_path.unlink(missing_ok=True)
                         st.rerun()
                     except SnapshotError as e:
@@ -388,15 +449,29 @@ with st.container(border=True):
 
 st.divider()
 
+pending_flash = st.session_state.pop(FLASH_MESSAGE_KEY, None)
+if pending_flash:
+    st.success(pending_flash)
+    st.toast(pending_flash, icon="✅")
+
+st.markdown('<div id="imported-snapshots-anchor"></div>', unsafe_allow_html=True)
 st.subheader("Imported Snapshots")
 
 snapshots = snapshot_lib.list_snapshots()
+focus_snapshot_id = st.session_state.pop(FOCUS_SNAPSHOT_KEY, None)
 
 if not snapshots:
     st.info("No snapshots imported yet")
 else:
+    if focus_snapshot_id:
+        snapshots = sorted(
+            snapshots,
+            key=lambda s: (s.snapshot_id != focus_snapshot_id, s.snapshot_id),
+        )
+
     for snap in snapshots:
-        with st.expander(f"📦 {snap.snapshot_id}", expanded=False):
+        is_focus_snapshot = snap.snapshot_id == focus_snapshot_id
+        with st.expander(f"📦 {snap.snapshot_id}", expanded=is_focus_snapshot):
             with st.container(border=True):
                 c1, c2, c3 = st.columns([3, 5, 1])
                 
@@ -457,7 +532,11 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                             tmp_file.write(uploaded_algorithm.getvalue())
                             tmp_path = Path(tmp_file.name)
                         algo_id, version = algorithm_lib.import_algorithm(tmp_path)
-                        st.success(f"Imported algorithm: {algo_id} v{version}")
+                        _set_algorithm_focus(algo_id, version)
+                        _set_ui_feedback(
+                            f"Imported algorithm: {algo_id} v{version}",
+                            scroll_target="imported-algorithms-anchor",
+                        )
                         tmp_path.unlink(missing_ok=True)
                         st.rerun()
                     except Exception as e:
@@ -476,7 +555,7 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                             # Create dist/ with template files
                             dist_dir = tmp_dir_path / "dist"
                             dist_dir.mkdir(parents=True, exist_ok=True)
-                            (dist_dir / "drs.json").write_text(json.dumps({"datasets": []}, indent=2))
+                            (dist_dir / "ds.json").write_text(json.dumps({"datasets": []}, indent=2))
                             (dist_dir / "params.schema.json").write_text(
                                 json.dumps({"type": "object", "title": "Parameters", "properties": {}}, indent=2)
                             )
@@ -502,7 +581,7 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                                 "authors": [{"name": "unknown"}],
                                 "files": {
                                     "paramsSchemaPath": "dist/params.schema.json",
-                                    "drsPath": "dist/drs.json",
+                                    "dsPath": "dist/ds.json",
                                     "outputContractPath": "dist/output_contract.json",
                                 },
                                 "requires": {"sdk": SDK_VERSION},
@@ -510,22 +589,36 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                             (tmp_dir_path / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
                             algo_id, version = algorithm_lib.import_algorithm(tmp_dir_path)
-                            st.success(f"Imported algorithm: {algo_id} v{version}")
+                            _set_algorithm_focus(algo_id, version)
+                            _set_ui_feedback(
+                                f"Imported algorithm: {algo_id} v{version}",
+                                scroll_target="imported-algorithms-anchor",
+                            )
                             st.rerun()
                     except Exception as e:
                         st.error(f"Import failed: {e}")
 
 st.divider()
 
+st.markdown('<div id="imported-algorithms-anchor"></div>', unsafe_allow_html=True)
 st.subheader("Imported Algorithms")
 
 algorithms = algorithm_lib.list_algorithms()
+focus_algo_key = st.session_state.pop(FOCUS_ALGO_KEY, None)
 
 if not algorithms:
     st.info("No algorithms imported yet")
 else:
+    if focus_algo_key:
+        algorithms = sorted(
+            algorithms,
+            key=lambda a: (f"{a.algorithm_id}:{a.version}" != focus_algo_key, a.algorithm_id, a.version),
+        )
+
     for algo in algorithms:
-        with st.expander(f"🧩 {algo.algorithm_id} (v{algo.version})", expanded=False):
+        algo_key = f"{algo.algorithm_id}:{algo.version}"
+        is_focus_algo = algo_key == focus_algo_key
+        with st.expander(f"🧩 {algo.algorithm_id} (v{algo.version})", expanded=is_focus_algo):
             with st.container(border=True):
                 # Header info
                 head_c1, head_c2, head_c3 = st.columns([3, 2, 2])
@@ -575,3 +668,7 @@ else:
                             st.rerun()
                         except Exception as e:
                             st.error(f"Delete failed: {e}")
+
+pending_scroll_target = st.session_state.pop(SCROLL_TARGET_KEY, None)
+if pending_scroll_target:
+    _emit_scroll_to_element(pending_scroll_target)

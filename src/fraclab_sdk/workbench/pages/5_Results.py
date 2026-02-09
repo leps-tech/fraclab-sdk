@@ -95,11 +95,15 @@ def _load_output_contract(algo_id: str, algo_version: str):
     try:
         handle = algo_lib.get_algorithm(algo_id, algo_version)
         manifest_path = handle.directory / "manifest.json"
-        manifest_data = {}
-        if manifest_path.exists():
-            manifest_data = json.loads(manifest_path.read_text())
-        files = manifest_data.get("files") or {}
-        rel = files.get("outputContractPath", "dist/output_contract.json")
+        if not manifest_path.exists():
+            return None
+        manifest_data = json.loads(manifest_path.read_text())
+        files = manifest_data.get("files")
+        if not isinstance(files, dict):
+            return None
+        rel = files.get("outputContractPath")
+        if not isinstance(rel, str) or not rel:
+            return None
         contract_path = (handle.directory / rel).resolve()
         if not contract_path.exists():
             return None
@@ -172,7 +176,7 @@ else:
                         with m1:
                             st.markdown(f"**Item:** `{item.itemKey or art.artifactKey}`")
                         with m2:
-                            st.caption(f"Type: `{art.artifactType}`")
+                            st.caption(f"Type: `{art.type}`")
                         with m3:
                             if art.mimeType: st.caption(f"MIME: `{art.mimeType}`")
                         

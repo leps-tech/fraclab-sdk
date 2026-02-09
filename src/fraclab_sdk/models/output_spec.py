@@ -1,4 +1,4 @@
-"""OutputSpec helpers re-exporting models for schema definitions."""
+"""OutputSpec helper aliases for algorithm workspace schemas."""
 
 from fraclab_sdk.models.output_contract import (
     BlobOutputSchema,
@@ -13,7 +13,6 @@ from fraclab_sdk.models.output_contract import (
     ScalarOutputSchema,
 )
 
-# Backward-friendly aliases used by workspace schemas
 BlobSchema = BlobOutputSchema
 ObjectSchema = ObjectOutputSchema
 ScalarSchema = ScalarOutputSchema

@@ -12,6 +12,7 @@ from fraclab_sdk.run import RunManager
 from fraclab_sdk.selection.model import SelectionModel
 from fraclab_sdk.snapshot import SnapshotLibrary
 from fraclab_sdk.workbench import ui_styles
+from fraclab_sdk.workbench.utils import format_snapshot_option, format_timestamp
 
 st.set_page_config(page_title="Selection", page_icon="✅", layout="wide", initial_sidebar_state="expanded")
 st.title("Selection")
@@ -104,7 +105,7 @@ with col_snap:
         selected_snapshot_id = st.selectbox(
             "Select Snapshot",
             options=list(snapshot_options.keys()),
-            format_func=lambda x: f"{x}",
+            format_func=lambda x: format_snapshot_option(snapshot_options[x]),
             label_visibility="collapsed"
         )
         
@@ -114,7 +115,7 @@ with col_snap:
             sc1, sc2 = st.columns([3, 1])
             with sc1:
                 st.caption(f"**Bundle ID:** `{snap_obj.bundle_id}`")
-                st.caption(f"**Imported:** {snap_obj.imported_at}")
+                st.caption(f"**Imported:** {format_timestamp(snap_obj.imported_at)}")
             with sc2:
                 # Updated API: width="stretch"
                 if st.button("📜 DRS", key=f"view_drs_{selected_snapshot_id}", help="View Data Requirements", width="stretch"):

@@ -94,7 +94,7 @@ schema_dir.mkdir(parents=True, exist_ok=True)
 output_spec_path = schema_dir / "output_contract.py"
 
 DEFAULT_OUTPUTSPEC = '''from __future__ import annotations
-from fraclab_sdk.specs.output import BlobSchema, OutputContract, OutputDatasetContract, ScalarSchema
+from fraclab_sdk.models.output_spec import BlobSchema, OutputContract, OutputDatasetContract, ScalarSchema
 
 OUTPUT_CONTRACT = OutputContract(
     datasets=[
