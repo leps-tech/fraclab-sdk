@@ -12,7 +12,8 @@ from typing import TypeVar
 
 import typer
 
-from fraclab_sdk.algorithm import AlgorithmLibrary
+from fraclab_sdk.algorithm.library import AlgorithmLibrary
+from fraclab_sdk.algorithm.scaffold import create_algorithm_scaffold
 from fraclab_sdk.config import SDKConfig
 from fraclab_sdk.errors import ExitCode, FraclabError
 from fraclab_sdk.results import ResultReader
@@ -119,6 +120,54 @@ def algo_list():
         raise typer.Exit(0)
     for a in algos:
         typer.echo(f"{a.algorithm_id}\t{a.version}\t{a.imported_at}")
+
+
+@algo_app.command("init")
+@handle_errors
+def algo_init(
+    algo_id: str = typer.Argument(..., help="Algorithm ID (letters/numbers/_/-)"),
+    code_version: str = typer.Option("0.1.0", "--code-version", help="Algorithm code version"),
+    contract_version: str = typer.Option("1.0.0", "--contract-version", help="Algorithm contract version"),
+    name: str | None = typer.Option(None, "--name", help="Display name"),
+    summary: str = typer.Option("", "--summary", help="Algorithm summary"),
+    author_name: str = typer.Option("unknown", "--author-name", help="Author name"),
+    author_email: str = typer.Option("", "--author-email", help="Author email"),
+    author_organization: str = typer.Option("", "--author-organization", help="Author organization"),
+    notes: str | None = typer.Option(None, "--notes", help="Manifest notes"),
+    tag: list[str] | None = typer.Option(None, "--tag", help="Tag (repeatable)"),
+    workspace_root: Path | None = typer.Option(
+        None,
+        "--workspace-root",
+        help="Workspace root directory (defaults to <sdk_home>/workspace_algorithms)",
+    ),
+):
+    """Create a new local algorithm workspace scaffold."""
+    if not algo_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for ch in algo_id):
+        _error("Invalid algorithm id. Only letters, numbers, '_' and '-' are allowed.")
+        raise typer.Exit(ExitCode.INPUT_ERROR)
+
+    cfg, _, _, _ = _get_libs()
+    ws_root = (workspace_root or (cfg.sdk_home / "workspace_algorithms")).expanduser().resolve()
+    ws_root.mkdir(parents=True, exist_ok=True)
+
+    ws_dir = create_algorithm_scaffold(
+        algo_id=algo_id,
+        code_version=code_version,
+        contract_version=contract_version,
+        name=name or algo_id,
+        summary=summary,
+        authors=[
+            {
+                "name": author_name,
+                "email": author_email,
+                "organization": author_organization,
+            }
+        ],
+        notes=notes,
+        tags=tag or None,
+        workspace_root=ws_root,
+    )
+    typer.echo(f"Created workspace: {ws_dir}")
 
 
 @algo_app.command("compile")

@@ -26,6 +26,15 @@ st.markdown("""
         font-size: 14px !important;
         background-color: #fcfcfc !important;
     }
+
+    /* Validation result: full-width and copy-enabled on this page */
+    [data-testid="stCode"] {
+        user-select: text !important;
+        -webkit-user-select: text !important;
+    }
+    [data-testid="stCode"] button {
+        display: inline-flex !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -139,22 +148,45 @@ with col_valid:
             write_params_schema(algo_dir)
 
             result = validate_inputspec(algo_dir)
-            if result.valid:
-                if result.warnings:
-                    st.warning(f"Validation Passed with {len(result.warnings)} warning(s)", icon="⚠️")
-                else:
-                    st.success("Validation Passed!", icon="✅")
-            else:
-                st.error(f"Validation Failed ({len(result.errors)} error(s))", icon="🚫")
+            status = "pass"
+            if not result.valid:
+                status = "fail"
+            elif result.warnings:
+                status = "warn"
 
-            # Show all issues (errors and warnings)
+            lines: list[str] = []
             for issue in result.issues:
-                icon = "🔴" if issue.severity.value == "error" else "🟡"
-                path_str = f" at `{issue.path}`" if issue.path else ""
+                icon = "ERROR" if issue.severity.value == "error" else "WARN"
+                path_str = f" at {issue.path}" if issue.path else ""
                 details_str = ""
-                if issue.details:
-                    if "suggested" in issue.details:
-                        details_str = f" → Suggested: `{issue.details['suggested']}`"
-                st.markdown(f"{icon} **{issue.code}**{path_str}: {issue.message}{details_str}")
+                if issue.details and "suggested" in issue.details:
+                    details_str = f" | suggested={issue.details['suggested']}"
+                lines.append(f"[{icon}] {issue.code}{path_str}: {issue.message}{details_str}")
+
+            st.session_state["schema_edit_validate_status"] = status
+            st.session_state["schema_edit_validate_result_text"] = "\n".join(lines) if lines else "No issues."
+            st.session_state["schema_edit_validate_counts"] = {
+                "errors": len(result.errors),
+                "warnings": len(result.warnings),
+            }
         except Exception as e:
-            st.error(f"Validation error: {e}")
+            st.session_state["schema_edit_validate_status"] = "error"
+            st.session_state["schema_edit_validate_result_text"] = f"Validation error: {e}"
+            st.session_state["schema_edit_validate_counts"] = {"errors": 1, "warnings": 0}
+
+# --- 5. Validation Result (full width) ---
+if "schema_edit_validate_status" in st.session_state:
+    status = st.session_state["schema_edit_validate_status"]
+    counts = st.session_state.get("schema_edit_validate_counts", {"errors": 0, "warnings": 0})
+    text = st.session_state.get("schema_edit_validate_result_text", "No issues.")
+
+    if status == "pass":
+        st.success("Validation Passed!", icon="✅")
+    elif status == "warn":
+        st.warning(f"Validation Passed with {counts['warnings']} warning(s)", icon="⚠️")
+    elif status == "fail":
+        st.error(f"Validation Failed ({counts['errors']} error(s))", icon="🚫")
+    else:
+        st.error("Validation encountered an exception", icon="🚫")
+
+    st.code(text, language="text")

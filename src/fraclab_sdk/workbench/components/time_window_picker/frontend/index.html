@@ -1,0 +1,896 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Time Window Picker</title>
+    <script src="./vendor/plotly-2.35.2.min.js"></script>
+    <style>
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #1f2937;
+        overflow: hidden;
+      }
+      .root {
+        padding: 8px 4px;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+      .label {
+        font-size: 12px;
+        color: #6b7280;
+        min-width: 84px;
+      }
+      select,
+      button,
+      input[type="number"] {
+        font-size: 12px;
+      }
+      .tabs {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 8px;
+      }
+      .tab {
+        border: 1px solid #d1d5db;
+        background: #fff;
+        border-radius: 8px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      .tab.active {
+        border-color: #2563eb;
+        color: #2563eb;
+      }
+      .scope-inline {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+      .scope-chip {
+        border: 1px solid #d1d5db;
+        border-radius: 999px;
+        padding: 2px 8px;
+        background: #fff;
+      }
+      #plot {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        margin: 8px 0 10px;
+      }
+      .window-row {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+        margin-bottom: 8px;
+      }
+      .window-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 100px;
+        gap: 8px;
+        align-items: center;
+      }
+      .hint {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .slot-hint {
+        border: 1px solid #fcd34d;
+        background: #fffbeb;
+        color: #92400e;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        font-weight: 600;
+        width: 100%;
+      }
+      .global-summary {
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px;
+        margin-top: 8px;
+      }
+      .global-summary-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #374151;
+        margin-bottom: 6px;
+      }
+      .global-summary-item {
+        border-top: 1px dashed #e5e7eb;
+        padding-top: 6px;
+        margin-top: 6px;
+      }
+      .global-summary-item:first-child {
+        border-top: 0;
+        padding-top: 0;
+        margin-top: 0;
+      }
+      .global-summary-item-title {
+        font-size: 12px;
+        font-weight: 600;
+        color: #111827;
+      }
+      .global-window-row {
+        display: grid;
+        grid-template-columns: 1fr 110px;
+        gap: 8px;
+        align-items: center;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="root">
+      <div class="row">
+        <span class="label">Dataset</span>
+        <select id="datasetSelect"></select>
+      </div>
+
+      <div class="row">
+        <span class="label">Items Scope</span>
+        <div id="scopePicker" class="scope-inline"></div>
+        <span id="scopeHint" class="hint"></span>
+      </div>
+
+      <div id="itemTabs" class="tabs"></div>
+      <div class="row">
+        <span id="windowSlotHint" class="slot-hint"></span>
+      </div>
+      <div id="plot"></div>
+      <div class="row">
+        <button id="clearPendingBtn" type="button">Clear Pending</button>
+        <span id="clickHint" class="hint"></span>
+      </div>
+      <div id="windows"></div>
+      <div class="row">
+        <span id="constraintHint" class="hint"></span>
+      </div>
+      <div class="global-summary">
+        <div class="global-summary-title">
+          Selected Windows · Run <span id="runIdLabel">unknown</span>
+        </div>
+        <div id="globalWindows"></div>
+      </div>
+    </div>
+
+    <script>
+      const Streamlit = (() => {
+        const API_VERSION = 1;
+        const RENDER_EVENT = "streamlit:render";
+        const events = new EventTarget();
+        let registered = false;
+        let lastFrameHeight = -1;
+        function send(type, data) {
+          window.parent.postMessage({ isStreamlitMessage: true, type, ...data }, "*");
+        }
+        function onMessage(event) {
+          const data = event?.data || {};
+          if (data.type !== RENDER_EVENT) return;
+          const ev = new CustomEvent(RENDER_EVENT, {
+            detail: {
+              disabled: Boolean(data.disabled),
+              args: data.args || {},
+              theme: data.theme || null,
+            },
+          });
+          events.dispatchEvent(ev);
+        }
+        return {
+          API_VERSION,
+          RENDER_EVENT,
+          events,
+          setComponentReady() {
+            if (!registered) {
+              window.addEventListener("message", onMessage);
+              registered = true;
+            }
+            send("streamlit:componentReady", { apiVersion: API_VERSION });
+          },
+          setFrameHeight(height) {
+            const h = Number.isFinite(height) ? Math.round(height) : document.body.scrollHeight;
+            if (h === lastFrameHeight) return;
+            lastFrameHeight = h;
+            send("streamlit:setFrameHeight", { height: h });
+          },
+          setComponentValue(value) {
+            send("streamlit:setComponentValue", { value, dataType: "json" });
+          },
+        };
+      })();
+      const root = document.querySelector(".root");
+      const datasetSelect = document.getElementById("datasetSelect");
+      const itemTabs = document.getElementById("itemTabs");
+      const scopePicker = document.getElementById("scopePicker");
+      const windowsEl = document.getElementById("windows");
+      const clearPendingBtn = document.getElementById("clearPendingBtn");
+      const clickHint = document.getElementById("clickHint");
+      const windowSlotHint = document.getElementById("windowSlotHint");
+      const scopeHint = document.getElementById("scopeHint");
+      const constraintHint = document.getElementById("constraintHint");
+      const plotEl = document.getElementById("plot");
+      const runIdLabelEl = document.getElementById("runIdLabel");
+      const globalWindowsEl = document.getElementById("globalWindows");
+
+      const state = {
+        datasetsConfig: {},
+        valueByDataset: {},
+        activeDataset: null,
+        activeItemByDataset: {},
+        pendingByDataset: {},
+        maxWindows: 64,
+        runId: "unknown",
+      };
+      let lastRenderSig = "";
+      let legendState = {};
+      let frameHeight = 560;
+      let lastPlotKey = null;
+      let frameMeasureRaf = null;
+      let rootResizeObserver = null;
+
+      function clamp(v, a, b) {
+        return Math.min(b, Math.max(a, v));
+      }
+
+      function syncFrameHeightNow() {
+        // IMPORTANT: only measure actual content container height.
+        // Using document/body scrollHeight can include iframe viewport height and
+        // create a positive feedback loop (height grows forever).
+        const rectH = root ? root.getBoundingClientRect().height : 0;
+        const scrollH = root ? root.scrollHeight : 0;
+        const measured = Math.ceil(Math.max(rectH, scrollH));
+        const target = Math.max(420, Math.min(3200, measured));
+        if (target !== frameHeight) {
+          frameHeight = target;
+          Streamlit.setFrameHeight(frameHeight);
+        }
+      }
+
+      function syncFrameHeightSoon() {
+        if (frameMeasureRaf !== null) return;
+        frameMeasureRaf = requestAnimationFrame(() => {
+          frameMeasureRaf = null;
+          syncFrameHeightNow();
+        });
+      }
+
+      function ensureFrameObserver() {
+        if (rootResizeObserver || typeof ResizeObserver !== "function") return;
+        rootResizeObserver = new ResizeObserver(() => {
+          syncFrameHeightSoon();
+        });
+        rootResizeObserver.observe(root);
+      }
+
+      function toDateLabel(epochSeconds, fractionDigits = 3) {
+        const d = new Date(Number(epochSeconds) * 1000);
+        if (Number.isNaN(d.getTime())) return String(epochSeconds);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const dd = String(d.getDate()).padStart(2, "0");
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mi = String(d.getMinutes()).padStart(2, "0");
+        const ss = String(d.getSeconds()).padStart(2, "0");
+        if (fractionDigits <= 0) return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+        const frac = Math.round((Number(epochSeconds) - Math.floor(Number(epochSeconds))) * 1000)
+          .toString()
+          .padStart(3, "0");
+        return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${frac}`;
+      }
+
+      function dateFractionDigitsForItem(datasetKey, itemKey) {
+        const cfg = getDatasetConfig(datasetKey);
+        const item = cfg.items[itemKey] || {};
+        if (!item.x_is_datetime) return 0;
+        const step = Number(item.x_step);
+        if (!Number.isFinite(step) || step >= 1) return 0;
+        return 3;
+      }
+
+      function normalizeInputValue(currentValue) {
+        const valueByDataset = {};
+        if (Array.isArray(currentValue)) {
+          for (const ds of currentValue) {
+            if (!ds || typeof ds !== "object") continue;
+            const datasetKey = String(ds.datasetKey || "").trim();
+            if (!datasetKey) continue;
+            const map = {};
+            const items = Array.isArray(ds.items) ? ds.items : [];
+            for (const item of items) {
+              if (!item || typeof item !== "object") continue;
+              const itemKey = String(item.itemKey || "").trim();
+              if (!itemKey) continue;
+              const windows = Array.isArray(item.windows) ? item.windows : [];
+              map[itemKey] = windows
+                .filter((w) => w && typeof w === "object")
+                .map((w) => ({ min: Number(w.min), max: Number(w.max) }))
+                .filter((w) => Number.isFinite(w.min) && Number.isFinite(w.max) && w.min < w.max);
+            }
+            const itemsWithWindows = Array.isArray(ds.itemsWithWindows) ? ds.itemsWithWindows.map(String) : [];
+            valueByDataset[datasetKey] = { itemsWithWindows, items: map };
+          }
+        }
+        return valueByDataset;
+      }
+
+      function ensureDatasetState(datasetKey) {
+        if (!state.valueByDataset[datasetKey]) {
+          state.valueByDataset[datasetKey] = { itemsWithWindows: [], items: {} };
+        }
+      }
+
+      function getDatasetConfig(datasetKey) {
+        return state.datasetsConfig[datasetKey] || { items: {}, items_with_windows: "all", window_count: { max: 64 } };
+      }
+
+      function itemKeys(datasetKey) {
+        const cfg = getDatasetConfig(datasetKey);
+        return Object.keys(cfg.items || {});
+      }
+
+      function scopedItemKeys(datasetKey) {
+        ensureDatasetState(datasetKey);
+        const dsState = state.valueByDataset[datasetKey];
+        const all = itemKeys(datasetKey);
+        const selected = Array.isArray(dsState.itemsWithWindows) ? dsState.itemsWithWindows.map(String) : [];
+        const selectedSet = new Set(selected);
+        return all.filter((k) => selectedSet.has(k));
+      }
+
+      function activeItem(datasetKey) {
+        const keys = scopedItemKeys(datasetKey);
+        const current = state.activeItemByDataset[datasetKey];
+        if (keys.includes(current)) return current;
+        const next = keys[0] || null;
+        state.activeItemByDataset[datasetKey] = next;
+        return next;
+      }
+
+      function normalizeWindowConstraint(raw) {
+        const wc = raw && typeof raw === "object" ? raw : {};
+        const exact = Number.isInteger(wc.exact) ? wc.exact : null;
+        const min = Number.isInteger(wc.min) ? wc.min : null;
+        const max = Number.isInteger(wc.max) ? wc.max : null;
+        if (exact !== null) {
+          return { exact, min: exact, max: exact };
+        }
+        const resolvedMin = min;
+        const resolvedMax = max !== null ? max : state.maxWindows;
+        return {
+          exact: null,
+          min: resolvedMin,
+          max: Math.max(resolvedMax, resolvedMin ?? 0),
+        };
+      }
+
+      function normalizeItemsScope(raw, totalCount) {
+        const scope = raw && typeof raw === "object" ? raw : {};
+        const policy = String(scope.policy || "subset").toLowerCase() === "all" ? "all" : "subset";
+        const exact = Number.isInteger(scope.exact) ? scope.exact : null;
+        const minRaw = Number.isInteger(scope.min) ? scope.min : null;
+        const maxRaw = Number.isInteger(scope.max) ? scope.max : null;
+        if (policy === "all") {
+          return { policy, exact: totalCount, min: totalCount, max: totalCount };
+        }
+        if (exact !== null) {
+          const e = Math.max(0, Math.min(totalCount, exact));
+          return { policy, exact: e, min: e, max: e };
+        }
+        const min = minRaw !== null ? Math.max(0, Math.min(totalCount, minRaw)) : 0;
+        const max = maxRaw !== null ? Math.max(min, Math.min(totalCount, maxRaw)) : totalCount;
+        return { policy, exact: null, min, max };
+      }
+
+      function xRangeFor(datasetKey, itemKey) {
+        const cfg = getDatasetConfig(datasetKey);
+        const item = cfg.items[itemKey] || {};
+        const xr = Array.isArray(item.x_range) ? item.x_range : [0, 1000];
+        return [Number(xr[0]) || 0, Number(xr[1]) || 1000];
+      }
+
+      function xStepFor(datasetKey, itemKey) {
+        const cfg = getDatasetConfig(datasetKey);
+        const item = cfg.items[itemKey] || {};
+        const raw = Number(item.x_step);
+        if (Number.isFinite(raw) && raw > 0) return raw;
+        return item.x_is_datetime ? 1 : 0.001;
+      }
+
+      function windowsFor(datasetKey, itemKey) {
+        ensureDatasetState(datasetKey);
+        const dsState = state.valueByDataset[datasetKey];
+        if (!Array.isArray(dsState.items[itemKey])) dsState.items[itemKey] = [];
+        return dsState.items[itemKey];
+      }
+
+      function pendingFor(datasetKey, itemKey) {
+        if (!state.pendingByDataset[datasetKey]) state.pendingByDataset[datasetKey] = {};
+        if (!(itemKey in state.pendingByDataset[datasetKey])) state.pendingByDataset[datasetKey][itemKey] = null;
+        return state.pendingByDataset[datasetKey][itemKey];
+      }
+
+      function setPending(datasetKey, itemKey, value) {
+        if (!state.pendingByDataset[datasetKey]) state.pendingByDataset[datasetKey] = {};
+        state.pendingByDataset[datasetKey][itemKey] = value;
+      }
+
+      function buildOutputValue() {
+        const out = [];
+        for (const datasetKey of Object.keys(state.valueByDataset)) {
+          const dsState = state.valueByDataset[datasetKey];
+          const items = [];
+          for (const [itemKey, windows] of Object.entries(dsState.items || {})) {
+            if (!Array.isArray(windows) || windows.length === 0) continue;
+            items.push({
+              itemKey,
+              windows: windows.map((w) => ({ min: Number(w.min), max: Number(w.max) })),
+            });
+          }
+          if (items.length === 0) continue;
+          const entry = { datasetKey, items };
+          entry.itemsWithWindows = Array.isArray(dsState.itemsWithWindows) ? dsState.itemsWithWindows : [];
+          out.push(entry);
+        }
+        return out.length ? out : null;
+      }
+
+      function sendValue() {
+        Streamlit.setComponentValue(buildOutputValue());
+      }
+
+      function itemTitle(datasetKey, itemKey) {
+        const item = getDatasetConfig(datasetKey).items[itemKey] || {};
+        return item.stage_id ? `${itemKey} · ${item.stage_id}` : itemKey;
+      }
+
+      function renderDatasetSelector() {
+        const keys = Object.keys(state.datasetsConfig || {});
+        datasetSelect.innerHTML = "";
+        for (const k of keys) {
+          const op = document.createElement("option");
+          op.value = k;
+          op.textContent = k;
+          datasetSelect.appendChild(op);
+        }
+        if (!keys.includes(state.activeDataset)) state.activeDataset = keys[0] || null;
+        datasetSelect.value = state.activeDataset || "";
+        datasetSelect.onchange = () => {
+          state.activeDataset = datasetSelect.value;
+          const ds = state.activeDataset;
+          const items = itemKeys(ds);
+          if (!items.includes(state.activeItemByDataset[ds])) {
+            state.activeItemByDataset[ds] = items[0] || null;
+          }
+          renderAll();
+        };
+      }
+
+      function renderScopePicker() {
+        const ds = state.activeDataset;
+        ensureDatasetState(ds);
+        const dsState = state.valueByDataset[ds];
+        const all = itemKeys(ds);
+        const scopeCfg = normalizeItemsScope(getDatasetConfig(ds).items_scope, all.length);
+        const current = Array.isArray(dsState.itemsWithWindows) ? dsState.itemsWithWindows.map(String) : [];
+        const currentSet = new Set(current.filter((k) => all.includes(k)));
+        if (scopeCfg.policy === "all") {
+          currentSet.clear();
+          for (const k of all) currentSet.add(k);
+        } else if (currentSet.size === 0 && all.length > 0) {
+          for (const k of all) currentSet.add(k);
+          while (currentSet.size > scopeCfg.max) {
+            currentSet.delete([...currentSet][currentSet.size - 1]);
+          }
+          while (currentSet.size < scopeCfg.min && currentSet.size < all.length) {
+            const candidate = all.find((k) => !currentSet.has(k));
+            if (!candidate) break;
+            currentSet.add(candidate);
+          }
+        }
+        dsState.itemsWithWindows = all.filter((k) => currentSet.has(k));
+
+        const count = dsState.itemsWithWindows.length;
+        if (scopeCfg.policy === "all") {
+          scopeHint.textContent = `Required by schema: all ${all.length} item(s) must be selected.`;
+          scopeHint.style.color = "#6b7280";
+        } else if (scopeCfg.exact !== null) {
+          const ok = count === scopeCfg.exact;
+          scopeHint.textContent = `Required by schema: exactly ${scopeCfg.exact} item(s). Current: ${count}.`;
+          scopeHint.style.color = ok ? "#6b7280" : "#b91c1c";
+        } else {
+          const ok = count >= scopeCfg.min && count <= scopeCfg.max;
+          scopeHint.textContent = `Required by schema: min ${scopeCfg.min}, max ${scopeCfg.max}. Current: ${count}.`;
+          scopeHint.style.color = ok ? "#6b7280" : "#b91c1c";
+        }
+
+        scopePicker.innerHTML = "";
+        for (const itemKey of all) {
+          const wrap = document.createElement("label");
+          wrap.className = "scope-chip";
+          const cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.checked = currentSet.has(itemKey);
+          cb.disabled = scopeCfg.policy === "all";
+          cb.onchange = () => {
+            const set = new Set(currentSet);
+            if (cb.checked) {
+              if (set.size >= scopeCfg.max) {
+                cb.checked = false;
+                return;
+              }
+              set.add(itemKey);
+            } else {
+              if (set.size <= scopeCfg.min) {
+                cb.checked = true;
+                return;
+              }
+              set.delete(itemKey);
+            }
+            dsState.itemsWithWindows = all.filter((k) => set.has(k));
+            if (!set.has(state.activeItemByDataset[ds])) {
+              state.activeItemByDataset[ds] = dsState.itemsWithWindows[0] || null;
+            }
+            renderAll();
+            sendValue();
+          };
+          wrap.appendChild(cb);
+          wrap.appendChild(document.createTextNode(` ${itemTitle(ds, itemKey)}`));
+          scopePicker.appendChild(wrap);
+        }
+      }
+
+      function plotShapes(datasetKey, itemKey) {
+        const cfg = getDatasetConfig(datasetKey).items[itemKey] || {};
+        const isDt = !!cfg.x_is_datetime;
+        const out = [];
+        for (const w of windowsFor(datasetKey, itemKey)) {
+          const x0 = isDt ? new Date(w.min * 1000) : w.min;
+          const x1 = isDt ? new Date(w.max * 1000) : w.max;
+          out.push({ type: "line", xref: "x", yref: "paper", x0, x1: x0, y0: 0, y1: 1, line: { color: "#ef4444", width: 1, dash: "dash" } });
+          out.push({ type: "line", xref: "x", yref: "paper", x0: x1, x1, y0: 0, y1: 1, line: { color: "#ef4444", width: 1, dash: "dash" } });
+          out.push({ type: "rect", xref: "x", yref: "paper", x0, x1, y0: 0, y1: 1, line: { width: 0 }, fillcolor: "rgba(239,68,68,0.18)" });
+        }
+        const pending = pendingFor(datasetKey, itemKey);
+        if (Number.isFinite(pending)) {
+          const px = isDt ? new Date(pending * 1000) : pending;
+          out.push({ type: "line", xref: "x", yref: "paper", x0: px, x1: px, y0: 0, y1: 1, line: { color: "#f59e0b", width: 2, dash: "dot" } });
+        }
+        return out;
+      }
+
+      function toEpochSeconds(rawX) {
+        if (typeof rawX === "number") return rawX;
+        const dt = new Date(rawX);
+        const ms = dt.getTime();
+        if (Number.isFinite(ms)) return ms / 1000;
+        return null;
+      }
+
+      function currentView() {
+        const ds = state.activeDataset;
+        const itemKey = ds ? activeItem(ds) : null;
+        return { ds, itemKey };
+      }
+
+      async function renderPlot(ds, itemKey, shapesOnly) {
+        if (!itemKey) {
+          if (plotEl._fullLayout) Plotly.purge(plotEl);
+          plotEl.innerHTML = "";
+          lastPlotKey = null;
+          return;
+        }
+        const plotKey = `${ds}:${itemKey}`;
+
+        // Shape-only fast path: if same item, just update shapes without re-plotting.
+        if (shapesOnly && lastPlotKey === plotKey && plotEl.data) {
+          Plotly.relayout(plotEl, { shapes: plotShapes(ds, itemKey) });
+          syncFrameHeightSoon();
+          return;
+        }
+
+        const item = getDatasetConfig(ds).items[itemKey] || {};
+        const traces = Array.isArray(item.traces) ? item.traces : [];
+        const isDt = !!item.x_is_datetime;
+        const data = traces.map((t, idx) => ({
+          type: "scatter",
+          mode: "lines",
+          name: t.name || `curve-${idx + 1}`,
+          x: isDt ? (t.x || []).map((v) => new Date(v * 1000)) : (t.x || []),
+          y: t.y || [],
+          visible: legendState[`${ds}:${itemKey}:${t.name || idx}`] ?? true,
+          line: { width: idx === 0 ? 1.5 : 1.2 },
+        }));
+
+        const [xr0, xr1] = xRangeFor(ds, itemKey);
+        const layout = {
+          autosize: true,
+          height: state.height || 500,
+          margin: { l: 20, r: 20, t: 24, b: 20 },
+          showlegend: true,
+          dragmode: "zoom",
+          xaxis: {
+            title: isDt ? "Time" : "X",
+            range: isDt ? [new Date(xr0 * 1000), new Date(xr1 * 1000)] : [xr0, xr1],
+          },
+          yaxis: { title: "Value", autorange: true },
+          shapes: plotShapes(ds, itemKey),
+        };
+
+        const config = {
+          displaylogo: false,
+          responsive: true,
+          displayModeBar: true,
+          scrollZoom: true,
+        };
+
+        // Always purge first to guarantee clean DOM/SVG state in iframe.
+        if (plotEl._fullLayout) Plotly.purge(plotEl);
+        await Plotly.newPlot(plotEl, data, layout, config);
+        lastPlotKey = plotKey;
+        // newPlot + purge will drop listeners; always re-bind for current view.
+        bindPlotEvents(ds, itemKey);
+        // Force a redraw on next frame — works around iframe SVG rendering glitch
+        // where newPlot creates traces/legends but doesn't paint line paths.
+        requestAnimationFrame(() => {
+          if (plotEl._fullLayout) Plotly.Plots.resize(plotEl);
+          syncFrameHeightSoon();
+        });
+      }
+
+      function bindPlotEvents(ds, itemKey) {
+        if (typeof plotEl.removeAllListeners === "function") {
+          plotEl.removeAllListeners("plotly_legendclick");
+          plotEl.removeAllListeners("plotly_click");
+        }
+        plotEl.on("plotly_legendclick", (ev) => {
+          const uid = ev?.data?.[ev.curveNumber]?.uid;
+          if (uid) {
+            legendState[uid] = ev?.data?.[ev.curveNumber]?.visible === true ? "legendonly" : true;
+          }
+        });
+        plotEl.on("plotly_click", (ev) => {
+          const p = ev?.points?.[0];
+          if (!p) return;
+          const [xr0, xr1] = xRangeFor(ds, itemKey);
+          const step = xStepFor(ds, itemKey);
+          const cfg = getDatasetConfig(ds);
+          const wc = normalizeWindowConstraint(cfg.window_count);
+          const maxW = wc.max;
+          const windows = windowsFor(ds, itemKey);
+          const xValRaw = toEpochSeconds(p.x);
+          if (!Number.isFinite(xValRaw)) return;
+          const xVal = clamp(Number(xValRaw), xr0, xr1);
+          const pending = pendingFor(ds, itemKey);
+          if (!Number.isFinite(pending)) {
+            setPending(ds, itemKey, xVal);
+            renderPlot(ds, itemKey, true);
+            renderWindows(ds, itemKey);
+            renderGlobalWindowsSummary();
+            return;
+          }
+          if (windows.length >= maxW) {
+            setPending(ds, itemKey, null);
+            renderPlot(ds, itemKey, true);
+            renderWindows(ds, itemKey);
+            renderGlobalWindowsSummary();
+            return;
+          }
+          let minV = Math.min(pending, xVal);
+          let maxV = Math.max(pending, xVal);
+          if (maxV - minV < step) {
+            maxV = Math.min(xr1, minV + step);
+            minV = Math.max(xr0, maxV - step);
+          }
+          if (maxV > minV) {
+            windows.push({ min: minV, max: maxV });
+            const dsState = state.valueByDataset[ds];
+            if (dsState && Array.isArray(dsState.itemsWithWindows) && !dsState.itemsWithWindows.includes(itemKey)) {
+              dsState.itemsWithWindows.push(itemKey);
+            }
+            setPending(ds, itemKey, null);
+            renderPlot(ds, itemKey, true);
+            renderWindows(ds, itemKey);
+            renderGlobalWindowsSummary();
+            sendValue();
+          }
+        });
+      }
+
+      function renderTabs(ds, active) {
+        const keys = scopedItemKeys(ds);
+        itemTabs.innerHTML = "";
+        for (const k of keys) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.className = `tab${k === active ? " active" : ""}`;
+          b.textContent = itemTitle(ds, k);
+          b.onclick = () => {
+            state.activeItemByDataset[ds] = k;
+            renderAll();
+          };
+          itemTabs.appendChild(b);
+        }
+      }
+
+      function renderWindows(ds, itemKey) {
+        windowsEl.innerHTML = "";
+        if (!itemKey) return;
+        const isDt = !!(getDatasetConfig(ds).items[itemKey] || {}).x_is_datetime;
+        const dtDigits = dateFractionDigitsForItem(ds, itemKey);
+        const windows = windowsFor(ds, itemKey);
+        const pending = pendingFor(ds, itemKey);
+        clickHint.textContent = Number.isFinite(pending)
+          ? `Pending start: ${isDt ? toDateLabel(pending, dtDigits) : pending.toFixed(6)}. Click again to set end.`
+          : "Click chart to set start, then click again to set end.";
+        const dsCfg = getDatasetConfig(ds);
+        const slots = Array.isArray(dsCfg.window_slots) ? dsCfg.window_slots : [];
+        const fallbackNote = String(dsCfg.window_slot_fallback_note || "").trim();
+        if (slots.length > 0) {
+          const nextIdx = windows.length;
+          if (nextIdx < slots.length && slots[nextIdx] && typeof slots[nextIdx] === "object") {
+            const title = String(slots[nextIdx].title || `Window ${nextIdx + 1}`);
+            const note = String(slots[nextIdx].note || "").trim();
+            windowSlotHint.textContent = note ? `${title}: ${note}` : title;
+          } else {
+            windowSlotHint.textContent = fallbackNote;
+          }
+        } else {
+          windowSlotHint.textContent = fallbackNote;
+        }
+
+        clearPendingBtn.onclick = () => {
+          setPending(ds, itemKey, null);
+          renderPlot(ds, itemKey, true);
+          renderWindows(ds, itemKey);
+          renderGlobalWindowsSummary();
+        };
+
+        const cfg = getDatasetConfig(ds);
+        const wc = normalizeWindowConstraint(cfg.window_count);
+        const count = windows.length;
+        let invalidMsg = "";
+        if (wc.exact !== null && count !== wc.exact) {
+          invalidMsg = `Current: ${count}, requires exactly ${wc.exact}.`;
+        } else if (wc.min !== null && count < wc.min) {
+          invalidMsg = `Current: ${count}, requires at least ${wc.min}.`;
+        } else if (count > wc.max) {
+          invalidMsg = `Current: ${count}, maximum is ${wc.max}.`;
+        }
+        if (wc.exact !== null) {
+          constraintHint.textContent = `Constraint: exactly ${wc.exact} window(s)${invalidMsg ? ` | ${invalidMsg}` : ""}`;
+        } else {
+          constraintHint.textContent = `Constraint: ${wc.min !== null ? `min ${wc.min}, ` : ""}max ${wc.max} window(s)${invalidMsg ? ` | ${invalidMsg}` : ""}`;
+        }
+        constraintHint.style.color = invalidMsg ? "#b91c1c" : "#6b7280";
+      }
+
+      function renderGlobalWindowsSummary() {
+        if (runIdLabelEl) runIdLabelEl.textContent = state.runId || "unknown";
+        globalWindowsEl.innerHTML = "";
+        const rows = [];
+        for (const datasetKey of Object.keys(state.valueByDataset || {})) {
+          const dsState = state.valueByDataset[datasetKey];
+          const items = dsState && typeof dsState === "object" ? dsState.items : {};
+          for (const itemKey of Object.keys(items || {})) {
+            const windows = Array.isArray(items[itemKey]) ? items[itemKey] : [];
+            if (!windows.length) continue;
+            const itemCfg = getDatasetConfig(datasetKey).items[itemKey] || {};
+            rows.push({
+              datasetKey,
+              itemKey,
+              stageId: itemCfg.stage_id || "",
+              isDatetime: !!itemCfg.x_is_datetime,
+              dtDigits: dateFractionDigitsForItem(datasetKey, itemKey),
+              windows,
+            });
+          }
+        }
+        if (!rows.length) {
+          const empty = document.createElement("div");
+          empty.className = "hint";
+          empty.textContent = "No windows selected yet.";
+          globalWindowsEl.appendChild(empty);
+          return;
+        }
+
+        rows.sort((a, b) => `${a.datasetKey}/${a.itemKey}`.localeCompare(`${b.datasetKey}/${b.itemKey}`));
+        for (const row of rows) {
+          const wrap = document.createElement("div");
+          wrap.className = "global-summary-item";
+          const title = document.createElement("div");
+          title.className = "global-summary-item-title";
+          title.textContent = row.stageId
+            ? `${row.datasetKey} · ${row.itemKey} · ${row.stageId}`
+            : `${row.datasetKey} · ${row.itemKey}`;
+          wrap.appendChild(title);
+
+          row.windows.forEach((w, i) => {
+            const line = document.createElement("div");
+            line.className = "global-window-row";
+            const text = document.createElement("div");
+            text.className = "hint";
+            const start = row.isDatetime ? toDateLabel(w.min, row.dtDigits) : Number(w.min).toFixed(6);
+            const end = row.isDatetime ? toDateLabel(w.max, row.dtDigits) : Number(w.max).toFixed(6);
+            text.textContent = `Window ${i + 1}: ${start} -> ${end}`;
+
+            const delBtn = document.createElement("button");
+            delBtn.type = "button";
+            delBtn.textContent = "Delete";
+            delBtn.onclick = () => {
+              const dsState = state.valueByDataset[row.datasetKey];
+              if (!dsState || !dsState.items || !Array.isArray(dsState.items[row.itemKey])) return;
+              dsState.items[row.itemKey].splice(i, 1);
+              if (dsState.items[row.itemKey].length === 0) {
+                dsState.items[row.itemKey] = [];
+              }
+              if (state.activeDataset === row.datasetKey && activeItem(row.datasetKey) === row.itemKey) {
+                setPending(row.datasetKey, row.itemKey, null);
+                renderPlot(row.datasetKey, row.itemKey, true);
+                renderWindows(row.datasetKey, row.itemKey);
+              }
+              renderGlobalWindowsSummary();
+              sendValue();
+              syncFrameHeightSoon();
+            };
+            line.appendChild(text);
+            line.appendChild(delBtn);
+            wrap.appendChild(line);
+          });
+          globalWindowsEl.appendChild(wrap);
+        }
+      }
+
+      async function renderAll() {
+        if (!state.activeDataset) {
+          root.innerHTML = "<div class='hint'>No datasets available.</div>";
+          syncFrameHeightSoon();
+          return;
+        }
+        renderDatasetSelector();
+        const ds = state.activeDataset;
+        renderScopePicker();
+        const itemKey = activeItem(ds);
+        renderTabs(ds, itemKey);
+        renderWindows(ds, itemKey);
+        renderGlobalWindowsSummary();
+        await renderPlot(ds, itemKey);
+        syncFrameHeightSoon();
+      }
+
+      function onRender(event) {
+        ensureFrameObserver();
+        const args = event.detail.args || {};
+        const datasetsConfig = args.datasets_config || {};
+        const currentValue = args.current_value;
+        const sig = JSON.stringify([datasetsConfig, currentValue]);
+        if (sig !== lastRenderSig) {
+          state.datasetsConfig = datasetsConfig;
+          state.height = Number(args.height) || 500;
+          state.maxWindows = 64;
+          state.runId = String(args.run_id || "unknown");
+
+          const existing = normalizeInputValue(currentValue);
+          const keys = Object.keys(datasetsConfig);
+          for (const k of keys) {
+            state.valueByDataset[k] = existing[k] || { itemsWithWindows: [], items: {} };
+          }
+          state.activeDataset = keys.includes(state.activeDataset) ? state.activeDataset : keys[0] || null;
+          lastRenderSig = sig;
+        }
+        renderAll();
+      }
+
+      Streamlit.events.addEventListener(Streamlit.RENDER_EVENT, onRender);
+      Streamlit.setComponentReady();
+      Streamlit.setFrameHeight(frameHeight);
+    </script>
+  </body>
+</html>

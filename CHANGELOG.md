@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.4 (Unreleased)
+
+### Algorithm Scaffold & CLI
+- Introduce shared scaffold module `src/fraclab_sdk/algorithm/scaffold.py`; Workbench and CLI now use the same scaffold/base-template source.
+- New CLI command: `fraclab-sdk algo init` to create local algorithm workspace scaffolds without relying on Workbench.
+- Scaffold/base template upgraded with shared schema helpers and UI models:
+  - `opt_bool(...)`
+  - `TimeWindow`
+  - `time_window_list(...)`
+- Existing repository examples and local `~/.fraclab/algorithms/*/schema/base.py` were aligned to the new base template.
+
+### Workbench Run: Time Window (New Schema Semantics)
+- Run page time-window rendering now hard-targets `List[TimeWindow]` / `Optional[List[TimeWindow]]` (clean break from old nested shapes).
+- Multiple time-window schema fields are merged into one unified picker at the bottom of the parameters panel.
+- Unified picker switches dataset internally; constraints are applied per dataset via each field’s `bind_dataset_key`.
+- Matching is based on selected run datasets (`runs/<run_id>/input/ds.json`), not on params `datasetKey`.
+- Added per-dataset slot guidance near the chart:
+  - reads `window_slots` and `window_slot_fallback_note`
+  - shows next slot note based on current selected window count.
+
 ## 0.1.3
 
 ### Workbench & Packaging

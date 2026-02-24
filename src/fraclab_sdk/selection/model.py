@@ -23,7 +23,7 @@ class SelectionModel:
     """Manages selection state for creating a run.
 
     Selection uses snapshot item indices (integers).
-    Items are automatically sorted and deduplicated.
+    Items are deduplicated while preserving input order.
     build_run_ds() produces a re-indexed DataSpec (0..N-1).
     """
 
@@ -111,7 +111,7 @@ class SelectionModel:
     def set_selected(self, dataset_key: str, item_indices: list[int]) -> None:
         """Set selected items for a dataset.
 
-        Items are automatically sorted (ascending) and deduplicated.
+        Items are deduplicated while preserving input order.
 
         Args:
             dataset_key: The dataset key.
@@ -125,14 +125,21 @@ class SelectionModel:
                 dataset_key=dataset_key,
                 available_keys=list(self._selections.keys()),
             )
-        # Sort and deduplicate
-        self._selections[dataset_key] = sorted(set(item_indices))
+        # Stable deduplication: preserve selection order.
+        seen: set[int] = set()
+        ordered: list[int] = []
+        for idx in item_indices:
+            if idx in seen:
+                continue
+            seen.add(idx)
+            ordered.append(idx)
+        self._selections[dataset_key] = ordered
 
     def get_selected(self, dataset_key: str) -> list[int]:
         """Get selected item indices for a dataset.
 
         Returns:
-            Sorted list of selected item indices.
+            Selected item indices in selection order.
 
         Raises:
             DatasetKeyError: If dataset_key is not in the selection.

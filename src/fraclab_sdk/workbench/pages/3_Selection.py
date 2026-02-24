@@ -322,7 +322,9 @@ if selected_snapshot_id and selected_algo_key:
 
             # --- CASE B: Multi Selection (Data Editor) ---
             else:
-                current_selected_set = set(selection_model.get_selected(dataset_key))
+                current_selected_order = selection_model.get_selected(dataset_key)
+                current_selected_set = set(current_selected_order)
+                order_map = {idx: rank + 1 for rank, idx in enumerate(current_selected_order)}
                 
                 rows = []
                 for idx, _ in items:
@@ -330,6 +332,7 @@ if selected_snapshot_id and selected_algo_key:
                     
                     rows.append({
                         "Selected": idx in current_selected_set,
+                        "Order": order_map.get(idx, ""),
                         "Index": idx,
                         "Type": status_label,
                         "_help": detail_help
@@ -373,6 +376,12 @@ if selected_snapshot_id and selected_algo_key:
                             width="small",
                             default=False
                         ),
+                        "Order": st.column_config.TextColumn(
+                            "Sel Order",
+                            width="small",
+                            disabled=True,
+                            help="Selection order used by run stage mapping"
+                        ),
                         "Index": st.column_config.NumberColumn(
                             "Item ID",
                             format="%d",
@@ -390,9 +399,12 @@ if selected_snapshot_id and selected_algo_key:
                 )
 
                 new_selected_indices = edited_df[edited_df["Selected"]]["Index"].tolist()
-                
-                if set(new_selected_indices) != current_selected_set:
-                    selection_model.set_selected(dataset_key, new_selected_indices)
+
+                merged_order = [idx for idx in current_selected_order if idx in new_selected_indices]
+                merged_order.extend(idx for idx in new_selected_indices if idx not in current_selected_set)
+
+                if merged_order != current_selected_order:
+                    selection_model.set_selected(dataset_key, merged_order)
                     st.rerun()
 
     st.divider()

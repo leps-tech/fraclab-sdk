@@ -9,7 +9,8 @@ from pathlib import Path
 import streamlit as st
 import streamlit.components.v1 as components
 
-from fraclab_sdk.algorithm import AlgorithmLibrary
+from fraclab_sdk.algorithm.library import AlgorithmLibrary
+from fraclab_sdk.algorithm.scaffold import create_algorithm_scaffold, ensure_schema_base
 from fraclab_sdk.config import SDKConfig
 from fraclab_sdk.errors import SnapshotError
 from fraclab_sdk.snapshot import SnapshotLibrary
@@ -70,140 +71,6 @@ const timer = setInterval(() => {{
 """,
         height=0,
     )
-
-
-BASE_SCHEMA_UTILS = '''"""Schema base utilities for json_schema_extra helpers."""
-
-from typing import Any
-
-
-def show_when_condition(field: str, op: str = "equals", value: Any = True) -> dict[str, Any]:
-    return {"field": field, "op": op, "value": value}
-
-
-def show_when_and(*conditions: dict[str, Any]) -> dict[str, Any]:
-    return {"and": list(conditions)}
-
-
-def show_when_or(*conditions: dict[str, Any]) -> dict[str, Any]:
-    return {"or": list(conditions)}
-
-
-def schema_extra(
-    *,
-    group: str | None = None,
-    order: int | None = None,
-    unit: str | None = None,
-    step: float | None = None,
-    ui_type: str | None = None,
-    collapsible: bool | None = None,
-    show_when: dict[str, Any] | None = None,
-    enum_labels: dict[str, str] | None = None,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    if group is not None:
-        result["group"] = group
-    if order is not None:
-        result["order"] = order
-    if unit is not None:
-        result["unit"] = unit
-    if step is not None:
-        result["step"] = step
-    if ui_type is not None:
-        result["ui_type"] = ui_type
-    if collapsible is not None:
-        result["collapsible"] = collapsible
-    if show_when is not None:
-        result["show_when"] = show_when
-    if enum_labels is not None:
-        result["enum_labels"] = enum_labels
-    result.update(kwargs)
-    return result
-'''
-
-
-def create_algorithm_scaffold(
-    algo_id: str,
-    code_version: str,
-    contract_version: str,
-    name: str,
-    summary: str,
-    authors: list[dict[str, str]],
-    notes: str | None = None,
-    tags: list[str] | None = None,
-    *,
-    workspace_root: Path,
-) -> Path:
-    """Create a new algorithm workspace with minimal files."""
-    ws_dir = workspace_root / algo_id / code_version
-    if ws_dir.exists():
-        raise FileExistsError(f"Algorithm workspace already exists: {ws_dir}")
-    ws_dir.mkdir(parents=True, exist_ok=True)
-
-    authors_list = [
-        {
-            "name": (a.get("name") or "").strip(),
-            "email": (a.get("email") or "").strip(),
-            "organization": (a.get("organization") or "").strip(),
-        }
-        for a in authors
-    ]
-    authors_list = [a for a in authors_list if any(v for v in a.values())] or [{"name": "unknown"}]
-
-    summary_val = summary.strip() or f"Algorithm {algo_id}"
-    manifest = {
-        "manifestVersion": "1",
-        "algorithmId": algo_id,
-        "name": name or algo_id,
-        "summary": summary_val,
-        "authors": authors_list,
-        "contractVersion": contract_version,
-        "codeVersion": code_version,
-        "notes": notes or None,
-        "tags": tags or None,
-        "files": {
-            "paramsSchemaPath": "dist/params.schema.json",
-            "dsPath": "dist/ds.json",
-            "outputContractPath": "dist/output_contract.json",
-        },
-        "requires": {"sdk": SDK_VERSION},
-        "repository": None,
-        "homepage": None,
-        "license": None,
-    }
-
-    (ws_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-
-    dist_dir = ws_dir / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    (dist_dir / "ds.json").write_text(json.dumps({"datasets": []}, indent=2), encoding="utf-8")
-    (dist_dir / "params.schema.json").write_text(
-        json.dumps({"type": "object", "title": "Parameters", "properties": {}}, indent=2),
-        encoding="utf-8",
-    )
-    (dist_dir / "output_contract.json").write_text(
-        json.dumps({"datasets": [], "invariants": [], "relations": []}, indent=2),
-        encoding="utf-8",
-    )
-
-    main_stub = '''"""Algorithm entrypoint."""
-
-from __future__ import annotations
-
-def run(ctx) -> None:
-    """Implement algorithm logic here."""
-    # TODO: replace with real logic
-    ctx.logger.info("algorithm scaffold run")
-'''
-    (ws_dir / "main.py").write_text(main_stub, encoding="utf-8")
-
-    schema_dir = ws_dir / "schema"
-    schema_dir.mkdir(parents=True, exist_ok=True)
-    (schema_dir / "__init__.py").write_text("", encoding="utf-8")
-    (schema_dir / "base.py").write_text(BASE_SCHEMA_UTILS, encoding="utf-8")
-
-    return ws_dir
 
 
 def render_manifest_fields(
@@ -564,10 +431,7 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                             )
 
                             # Create schema/ with base utilities
-                            schema_dir = tmp_dir_path / "schema"
-                            schema_dir.mkdir(parents=True, exist_ok=True)
-                            (schema_dir / "__init__.py").write_text("", encoding="utf-8")
-                            (schema_dir / "base.py").write_text(BASE_SCHEMA_UTILS, encoding="utf-8")
+                            ensure_schema_base(tmp_dir_path / "schema")
 
                             # Create manifest
                             algo_id = uploaded_algorithm.name.removesuffix(".py")

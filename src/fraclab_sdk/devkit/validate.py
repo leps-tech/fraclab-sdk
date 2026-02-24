@@ -103,6 +103,110 @@ ARRAY_SHOW_WHEN_OPS = {"in", "not_in"}
 SNAKE_CASE_PATTERN = re.compile(r"[a-z]+_[a-z]+")
 
 
+def _is_numeric_schema(schema: dict[str, Any]) -> bool:
+    """Return True if schema type is numeric."""
+    return schema.get("type") in {"number", "integer"}
+
+
+def _resolve_ref_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve local $ref like '#/$defs/Name'."""
+    ref = schema.get("$ref")
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return schema
+    current: Any = root_schema
+    for part in ref[2:].split("/"):
+        if not isinstance(current, dict):
+            return schema
+        current = current.get(part)
+        if current is None:
+            return schema
+    return current if isinstance(current, dict) else schema
+
+
+def _unwrap_nullable_anyof(schema: dict[str, Any]) -> dict[str, Any]:
+    """For Optional[T], prefer non-null anyOf branch."""
+    any_of = schema.get("anyOf")
+    if not isinstance(any_of, list):
+        return schema
+    non_null = [branch for branch in any_of if isinstance(branch, dict) and branch.get("type") != "null"]
+    if len(non_null) == 1:
+        return non_null[0]
+    return schema
+
+
+def _normalize_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve common wrappers used by Pydantic JSON schema."""
+    current = _unwrap_nullable_anyof(schema)
+    if "$ref" in current:
+        current = _resolve_ref_schema(current, root_schema)
+    return current
+
+
+def _is_float_range_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> bool:
+    """Validate FloatRange shape: {min: number, max: number}."""
+    schema = _normalize_schema(schema, root_schema)
+    if schema.get("type") != "object":
+        return False
+    props = schema.get("properties")
+    if not isinstance(props, dict):
+        return False
+    if "min" not in props or "max" not in props:
+        return False
+    min_schema = props["min"] if isinstance(props["min"], dict) else {}
+    max_schema = props["max"] if isinstance(props["max"], dict) else {}
+    min_schema = _normalize_schema(min_schema, root_schema)
+    max_schema = _normalize_schema(max_schema, root_schema)
+    if not _is_numeric_schema(min_schema) or not _is_numeric_schema(max_schema):
+        return False
+    return True
+
+
+def _validate_time_window_shape(
+    field_schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    path: str,
+    issues: list[ValidationIssue],
+) -> None:
+    """Validate ui_type=time_window schema shape.
+
+    Allowed:
+    1) FloatRange: {min:number, max:number}
+    2) List[FloatRange]
+    3) List[List[FloatRange]]
+    """
+    field_schema = _normalize_schema(field_schema, root_schema)
+
+    # 1) Single range object
+    if _is_float_range_schema(field_schema, root_schema):
+        return
+
+    # 2) List[FloatRange]
+    if field_schema.get("type") == "array":
+        items = field_schema.get("items")
+        if isinstance(items, dict) and _is_float_range_schema(items, root_schema):
+            return
+
+    # 3) List[List[FloatRange]]
+    if field_schema.get("type") == "array":
+        outer_items = field_schema.get("items")
+        if isinstance(outer_items, dict) and outer_items.get("type") == "array":
+            inner_items = outer_items.get("items")
+            if isinstance(inner_items, dict) and _is_float_range_schema(inner_items, root_schema):
+                return
+
+    issues.append(
+        ValidationIssue(
+            severity=ValidationSeverity.ERROR,
+            code="TIME_WINDOW_SCHEMA_INVALID",
+            message=(
+                "ui_type='time_window' requires one of: "
+                "FloatRange {min,max}, List[FloatRange], List[List[FloatRange]]"
+            ),
+            path=path,
+        )
+    )
+
+
 def _to_camel_case(snake_str: str) -> str:
     """Convert snake_case to camelCase."""
     parts = snake_str.split("_")
@@ -564,6 +668,10 @@ def _validate_json_schema_extra(
         if key == "enum_labels":
             if isinstance(value, dict):
                 _validate_enum_labels(field_schema, value, f"{path}.enum_labels", issues)
+
+        # ui_type specific shape validation
+        if key == "ui_type" and value == "time_window":
+            _validate_time_window_shape(field_schema, full_schema, path, issues)
 
 
 def _is_leaf_field(field_schema: dict[str, Any]) -> bool:

@@ -319,6 +319,20 @@ class InputParams(BaseModel):
     gain: float = Field(default=1.0)  # 未设置 step，Workbench 按整数样式显示
 ```
 
+#### 时间窗参数（`ui_type="time_window"`，新版）
+
+Run 页面使用一个统一时间窗选择器（位于参数区底部），在组件内切换 dataset。
+
+关键规则：
+- 字段 shape：`List[TimeWindow]` 或 `Optional[List[TimeWindow]]`（`TimeWindow = {min,max}`）。
+- 每个时间窗字段必须配置 `bind_dataset_key`（顶层或 `json_schema_extra`）。
+- 匹配依据是当前 run 的 `input/ds.json` 中已选 dataset keys，不是 params 里的 `datasetKey` 字段。
+- 同一个选择器在切换 dataset 时会套用该 dataset 对应字段的窗口约束（`minItems/maxItems`）。
+- 若定义 `window_slots` 与 `window_slot_fallback_note`，图像上方会显示“下一时间窗”备注：
+  - 还未选窗：显示第 1 条备注
+  - 选完第 1 个窗后：显示第 2 条备注
+  - 依次类推；超出后显示 fallback 备注
+
 <a id="quickstart-output-contract"></a>
 ### 2.5 定义输出合约 (OutputContract)
 
@@ -1169,6 +1183,21 @@ fraclab-sdk algo compile ./my-algorithm --bundle /path/to/bundle
 # - dist/output_contract.json (从 schema.output_contract:OUTPUT_CONTRACT)
 # - dist/ds.json (从 bundle 复制)
 # - dist/drs.json (从 bundle 复制)
+```
+
+#### 初始化算法工作区
+
+```bash
+# 创建本地算法脚手架（默认写入 ~/.fraclab/workspace_algorithms）
+fraclab-sdk algo init my-algorithm --code-version 0.1.0 --contract-version 1.0.0
+
+# 常用可选参数
+fraclab-sdk algo init my-algorithm \
+  --name "My Algorithm" \
+  --summary "Algorithm summary" \
+  --author-name "Your Name" \
+  --author-email "you@example.com" \
+  --tag test --tag smoke
 ```
 
 #### 导出算法包

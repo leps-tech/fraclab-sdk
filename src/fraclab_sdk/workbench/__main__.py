@@ -8,6 +8,11 @@ from pathlib import Path
 from typing import Sequence
 
 
+def _has_streamlit_flag(args: Sequence[str], flag_name: str) -> bool:
+    """Return True if streamlit CLI args already contain this flag."""
+    return any(a == flag_name or a.startswith(f"{flag_name}=") for a in args)
+
+
 def _require_optional_deps() -> None:
     """Fail fast with a clear message when optional deps are missing."""
     missing = []
@@ -39,6 +44,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(f"Workbench entry script not found: {home_path}")
 
     extra_args = list(argv) if argv is not None else sys.argv[1:]
+
+    # Streamlit defaults are 200MB for both file upload and websocket payload.
+    # Set higher sane defaults for local workbench unless user explicitly sets flags.
+    default_upload_mb = os.environ.get("FRACLAB_STREAMLIT_MAX_UPLOAD_MB", "2048")
+    default_message_mb = os.environ.get("FRACLAB_STREAMLIT_MAX_MESSAGE_MB", default_upload_mb)
+    if not _has_streamlit_flag(extra_args, "--server.maxUploadSize"):
+        extra_args.extend(["--server.maxUploadSize", str(default_upload_mb)])
+    if not _has_streamlit_flag(extra_args, "--server.maxMessageSize"):
+        extra_args.extend(["--server.maxMessageSize", str(default_message_mb)])
+
     sys.argv = ["streamlit", "run", str(home_path), *extra_args]
     os.chdir(workbench_dir)
     stcli.main()
