@@ -1,6 +1,6 @@
 # Fraclab SDK Reference
 
-> 版本: 0.1.3
+> 版本: 0.1.4
 > Python: >=3.11
 
 Fraclab SDK 是一个算法开发与执行框架，帮助算法开发者快速构建、测试和部署数据处理算法。
@@ -463,7 +463,7 @@ aw.write_scalar(
     "drsPath": "dist/drs.json"
   },
   "requires": {
-    "sdk": "0.1.3",
+    "sdk": "0.1.4",
     "core": "1.0.0"
   },
   "repository": "https://github.com/example/my-algorithm",
