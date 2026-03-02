@@ -88,29 +88,39 @@ with col_save:
     st.write("") 
     if st.button("💾 Save Changes", type="primary", width="stretch"):
         try:
-            # Write edits to current workspace
-            algo_dir.mkdir(parents=True, exist_ok=True)
-            algo_file.write_text(edited_text, encoding="utf-8")
+            target_version = (new_version or "").strip()
+            if not target_version:
+                st.error("Target Version is required.")
+                raise ValueError("Target Version is required.")
 
-            # Update manifest version and write
-            if manifest:
-                manifest["codeVersion"] = new_version
-                manifest_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+            if target_version == selected.version:
+                # Save in-place (same version).
+                algo_dir.mkdir(parents=True, exist_ok=True)
+                algo_file.write_text(edited_text, encoding="utf-8")
+                if manifest:
+                    manifest["codeVersion"] = target_version
+                    manifest_file.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+                st.toast("File saved successfully", icon="✅")
+            else:
+                # Save as new version: keep source version untouched.
+                new_dir = config.algorithms_dir / selected.algorithm_id / target_version
+                if new_dir.exists():
+                    st.error(f"Target version already exists: {target_version}")
+                    raise ValueError(f"Target version already exists: {target_version}")
 
-            # If version changed, copy to new workspace folder
-            if new_version != selected.version:
-                new_dir = config.algorithms_dir / selected.algorithm_id / new_version
-                new_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(algo_dir, new_dir, dirs_exist_ok=True)
-                # Ensure manifest in new dir reflects version
+                shutil.copytree(algo_dir, new_dir)
+                (new_dir / "main.py").write_text(edited_text, encoding="utf-8")
+
                 new_manifest_path = new_dir / "manifest.json"
                 if new_manifest_path.exists():
-                    new_manifest = json.loads(new_manifest_path.read_text())
-                    new_manifest["codeVersion"] = new_version
-                    new_manifest_path.write_text(json.dumps(new_manifest, indent=2), encoding="utf-8")
-                st.toast(f"Saved as new version: {new_version}", icon="✅")
+                    new_manifest = json.loads(new_manifest_path.read_text(encoding="utf-8"))
+                else:
+                    new_manifest = {}
+                new_manifest["codeVersion"] = target_version
+                new_manifest_path.write_text(json.dumps(new_manifest, indent=2), encoding="utf-8")
+                algo_lib.import_algorithm(new_dir)
+
+                st.toast(f"Saved as new version: {target_version}", icon="✅")
                 st.success(f"New workspace created at: `{new_dir}`")
-            else:
-                st.toast("File saved successfully", icon="✅")
         except Exception as e:
             st.error(f"Save failed: {e}")

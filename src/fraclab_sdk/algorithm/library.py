@@ -307,7 +307,18 @@ class AlgorithmLibrary:
         target_dir = self._config.algorithms_dir / algorithm_id / version
 
         if target_dir.exists():
-            # Already imported
+            # Already exists on disk: ensure it's indexed.
+            if self._index.get(algorithm_id, version) is None:
+                self._index.add(
+                    AlgorithmMeta(
+                        algorithm_id=algorithm_id,
+                        version=version,
+                        contract_version=manifest.contractVersion,
+                        name=manifest.name,
+                        summary=manifest.summary,
+                        notes=manifest.notes,
+                    )
+                )
             return algorithm_id, version
 
         # Copy to library

@@ -186,6 +186,7 @@ def show_create_algo_dialog():
         elif not re.match(r"^[A-Za-z0-9_-]+$", algo_id):
             st.error("Algorithm ID may only contain letters, numbers, _ or -.")
         else:
+            ws_dir: Path | None = None
             try:
                 ws_dir = create_algorithm_scaffold(
                     algo_id=algo_id,
@@ -208,6 +209,8 @@ def show_create_algo_dialog():
             except FileExistsError as e:
                 st.error(str(e))
             except Exception as e:
+                if ws_dir is not None and ws_dir.exists():
+                    shutil.rmtree(ws_dir, ignore_errors=True)
                 st.error(f"Create failed: {e}")
 
 

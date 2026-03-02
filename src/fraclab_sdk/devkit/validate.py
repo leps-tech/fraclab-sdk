@@ -68,7 +68,8 @@ class ValidationResult:
 # Allowed json_schema_extra keys (spec-defined)
 ALLOWED_JSON_SCHEMA_EXTRA_KEYS = {
     "group", "unit", "step", "ui_type", "show_when",
-    "enum_labels", "order", "collapsible"
+    "enum_labels", "order", "collapsible",
+    "bind_dataset_key", "window_slots", "window_slot_fallback_note",
 }
 
 # Type constraints for json_schema_extra keys
@@ -79,6 +80,9 @@ JSON_SCHEMA_EXTRA_TYPES: dict[str, type | tuple[type, ...]] = {
     "order": int,
     "collapsible": bool,
     "step": (int, float),
+    "bind_dataset_key": str,
+    "window_slots": list,
+    "window_slot_fallback_note": str,
 }
 
 # Canonical show_when operators (per InputSpec spec)
@@ -169,42 +173,71 @@ def _validate_time_window_shape(
 ) -> None:
     """Validate ui_type=time_window schema shape.
 
-    Allowed:
-    1) FloatRange: {min:number, max:number}
-    2) List[FloatRange]
-    3) List[List[FloatRange]]
-    """
-    field_schema = _normalize_schema(field_schema, root_schema)
+    The ONLY allowed shape is Optional[list[TimeWindow]] where TimeWindow is
+    {min: number, max: number}. The field JSON schema must be a nullable array
+    of FloatRange objects (anyOf with null + array).
 
-    # 1) Single range object
-    if _is_float_range_schema(field_schema, root_schema):
+    Bare list[TimeWindow] (non-Optional) is rejected.
+    Nested list[list[TimeWindow]] is rejected.
+    Single FloatRange is rejected.
+    """
+    raw = field_schema
+
+    # Check for Optional wrapper: anyOf containing null + array branch
+    any_of = raw.get("anyOf")
+    is_optional = False
+    inner = raw
+    if isinstance(any_of, list):
+        null_branches = [b for b in any_of if isinstance(b, dict) and b.get("type") == "null"]
+        non_null = [b for b in any_of if isinstance(b, dict) and b.get("type") != "null"]
+        if null_branches and len(non_null) == 1:
+            is_optional = True
+            inner = non_null[0]
+            # Resolve $ref on the inner branch
+            if "$ref" in inner:
+                inner = _resolve_ref_schema(inner, root_schema)
+
+    if not is_optional:
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code="TIME_WINDOW_NOT_OPTIONAL",
+                message=(
+                    "ui_type='time_window' field must be Optional[list[TimeWindow]]. "
+                    "Bare list[TimeWindow] is not allowed."
+                ),
+                path=path,
+            )
+        )
+        # Still check inner shape for better diagnostics
+        inner = _normalize_schema(raw, root_schema)
+
+    # Inner must be array of FloatRange
+    if inner.get("type") != "array":
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code="TIME_WINDOW_SCHEMA_INVALID",
+                message="ui_type='time_window' requires Optional[list[TimeWindow]]",
+                path=path,
+            )
+        )
         return
 
-    # 2) List[FloatRange]
-    if field_schema.get("type") == "array":
-        items = field_schema.get("items")
-        if isinstance(items, dict) and _is_float_range_schema(items, root_schema):
-            return
-
-    # 3) List[List[FloatRange]]
-    if field_schema.get("type") == "array":
-        outer_items = field_schema.get("items")
-        if isinstance(outer_items, dict) and outer_items.get("type") == "array":
-            inner_items = outer_items.get("items")
-            if isinstance(inner_items, dict) and _is_float_range_schema(inner_items, root_schema):
-                return
-
-    issues.append(
-        ValidationIssue(
-            severity=ValidationSeverity.ERROR,
-            code="TIME_WINDOW_SCHEMA_INVALID",
-            message=(
-                "ui_type='time_window' requires one of: "
-                "FloatRange {min,max}, List[FloatRange], List[List[FloatRange]]"
-            ),
-            path=path,
+    items = inner.get("items")
+    if not isinstance(items, dict) or not _is_float_range_schema(items, root_schema):
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code="TIME_WINDOW_SCHEMA_INVALID",
+                message=(
+                    "ui_type='time_window' array items must be TimeWindow "
+                    "(object with {min: number, max: number}). "
+                    "Nested list[list[TimeWindow]] is not allowed."
+                ),
+                path=path,
+            )
         )
-    )
 
 
 def _to_camel_case(snake_str: str) -> str:
@@ -669,9 +702,55 @@ def _validate_json_schema_extra(
             if isinstance(value, dict):
                 _validate_enum_labels(field_schema, value, f"{path}.enum_labels", issues)
 
-        # ui_type specific shape validation
+        # window_slots validation: list[object{title?:str,note?:str}]
+        if key == "window_slots":
+            if isinstance(value, list):
+                for idx, slot in enumerate(value):
+                    slot_path = f"{path}.window_slots[{idx}]"
+                    if not isinstance(slot, dict):
+                        issues.append(
+                            ValidationIssue(
+                                severity=ValidationSeverity.ERROR,
+                                code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_ITEM_INVALID",
+                                message="window_slots item must be object with optional 'title'/'note'",
+                                path=slot_path,
+                            )
+                        )
+                        continue
+                    for slot_key in slot.keys():
+                        if slot_key not in {"title", "note"}:
+                            issues.append(
+                                ValidationIssue(
+                                    severity=ValidationSeverity.ERROR,
+                                    code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_UNKNOWN_KEY",
+                                    message=f"window_slots item unknown key '{slot_key}'",
+                                    path=f"{slot_path}.{slot_key}",
+                                )
+                            )
+                    for text_key in ("title", "note"):
+                        if text_key in slot and not isinstance(slot[text_key], str):
+                            issues.append(
+                                ValidationIssue(
+                                    severity=ValidationSeverity.ERROR,
+                                    code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_TYPE_MISMATCH",
+                                    message=f"window_slots item '{text_key}' must be string",
+                                    path=f"{slot_path}.{text_key}",
+                                )
+                            )
+
+        # ui_type specific validation
         if key == "ui_type" and value == "time_window":
             _validate_time_window_shape(field_schema, full_schema, path, issues)
+            # bind_dataset_key is required for time_window fields
+            if "bind_dataset_key" not in extra:
+                issues.append(
+                    ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        code="TIME_WINDOW_MISSING_BIND_DATASET_KEY",
+                        message="ui_type='time_window' requires 'bind_dataset_key' in json_schema_extra",
+                        path=path,
+                    )
+                )
 
 
 def _is_leaf_field(field_schema: dict[str, Any]) -> bool:

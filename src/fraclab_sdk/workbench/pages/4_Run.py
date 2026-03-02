@@ -180,16 +180,18 @@ def _pick_xy_columns(df: pd.DataFrame) -> tuple[str | None, list[str], str]:
     """Pick x column and all numeric y columns, preferring datetime x-axis."""
     if df.empty:
         return None, [], "numeric"
-    x_time_candidates = ["timestamp", "ts", "time", "datetime", "dateTime", "date", "t"]
+    x_time_candidates = ["timestamp", "bucket", "ts", "time", "datetime", "dateTime", "date", "t"]
     x_numeric_candidates = ["sec", "seconds", "x"]
     y_candidates = ["treatingPressure", "pressure", "value", "y", "slurryRate", "proppantConc"]
+    col_map = {str(c).lower(): c for c in df.columns}
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
     for c in x_time_candidates:
-        if c in df.columns:
-            parsed = pd.to_datetime(df[c], errors="coerce", utc=True)
+        actual = col_map.get(c.lower())
+        if actual is not None:
+            parsed = pd.to_datetime(df[actual], errors="coerce", utc=True)
             if parsed.notna().any():
-                x_col = c
+                x_col = actual
                 break
     else:
         x_col = None
@@ -197,11 +199,11 @@ def _pick_xy_columns(df: pd.DataFrame) -> tuple[str | None, list[str], str]:
     x_mode = "datetime"
     if x_col is None:
         x_mode = "numeric"
-        x_col = next((c for c in x_numeric_candidates if c in numeric_cols), None)
+        x_col = next((col_map.get(c.lower()) for c in x_numeric_candidates if col_map.get(c.lower()) in numeric_cols), None)
         if x_col is None and numeric_cols:
             x_col = numeric_cols[0]
 
-    y_priority = [c for c in y_candidates if c in numeric_cols and c != x_col]
+    y_priority = [col_map[c.lower()] for c in y_candidates if col_map.get(c.lower()) in numeric_cols and col_map[c.lower()] != x_col]
     y_remaining = [c for c in numeric_cols if c != x_col and c not in y_priority]
     y_cols = y_priority + y_remaining
     return x_col, y_cols, x_mode
@@ -247,9 +249,9 @@ def _datetime_series_to_epoch_seconds(series: pd.Series) -> list[float]:
     return (dt_ns / 1e9).astype(float).tolist()
 
 
-def _coerce_ranges(value: Any) -> list[dict[str, float]]:
-    """Coerce list of {min,max} windows."""
-    out: list[dict[str, float]] = []
+def _coerce_ranges(value: Any) -> list[dict[str, Any]]:
+    """Coerce list of windows: {min,max} with optional itemKey."""
+    out: list[dict[str, Any]] = []
     if not isinstance(value, list):
         return out
     for v in value:
@@ -258,10 +260,49 @@ def _coerce_ranges(value: Any) -> list[dict[str, float]]:
         if "min" not in v or "max" not in v:
             continue
         try:
-            out.append({"min": float(v["min"]), "max": float(v["max"])})
+            w: dict[str, Any] = {"min": float(v["min"]), "max": float(v["max"])}
+            item_key = str(v.get("itemKey") or "").strip()
+            if item_key:
+                w["itemKey"] = item_key
+            out.append(w)
         except Exception:
             continue
     return out
+
+
+def _to_item_window_map(
+    windows: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, float]]], list[dict[str, float]]]:
+    """Split flattened windows into per-item windows and shared windows."""
+    by_item: dict[str, list[dict[str, float]]] = {}
+    shared: list[dict[str, float]] = []
+    for w in windows:
+        item_key = str(w.get("itemKey") or "").strip()
+        range_only = {"min": float(w["min"]), "max": float(w["max"])}
+        if item_key:
+            by_item.setdefault(item_key, []).append(range_only)
+        else:
+            shared.append(range_only)
+    return by_item, shared
+
+
+def _flatten_item_window_map(
+    by_item: dict[str, list[dict[str, float]]],
+    preferred_item_keys: list[str],
+) -> list[dict[str, Any]]:
+    """Flatten per-item windows to list[{itemKey,min,max}] in stable item order."""
+    output: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item_key in preferred_item_keys:
+        seen.add(item_key)
+        for w in by_item.get(item_key, []):
+            output.append({"itemKey": item_key, "min": w["min"], "max": w["max"]})
+    for item_key, windows in by_item.items():
+        if item_key in seen:
+            continue
+        for w in windows:
+            output.append({"itemKey": item_key, "min": w["min"], "max": w["max"]})
+    return output
 
 
 def _downsample_trace(
@@ -476,11 +517,15 @@ def _as_dataset_value_for_component(
     ds_cfg = datasets_config.get(dataset_key, {}) if isinstance(datasets_config, dict) else {}
     items_cfg = ds_cfg.get("items", {}) if isinstance(ds_cfg, dict) else {}
     item_keys = list(items_cfg.keys()) if isinstance(items_cfg, dict) else []
+    by_item, shared = _to_item_window_map(windows)
     return [
         {
             "datasetKey": dataset_key,
             "itemsWithWindows": "all",
-            "items": [{"itemKey": item_key, "windows": windows} for item_key in item_keys],
+            "items": [
+                {"itemKey": item_key, "windows": by_item.get(item_key, shared)}
+                for item_key in item_keys
+            ],
         }
     ]
 
@@ -513,20 +558,15 @@ def _from_dataset_value_for_component(
         item_key = str(item.get("itemKey") or "").strip()
         if not item_key:
             continue
-        windows = _coerce_ranges(item.get("windows"))
+        raw_windows = _coerce_ranges(item.get("windows"))
+        windows = [{"min": float(w["min"]), "max": float(w["max"])} for w in raw_windows]
         by_key[item_key] = windows
 
     ds_cfg = datasets_config.get(dataset_key, {}) if isinstance(datasets_config, dict) else {}
     items_cfg = ds_cfg.get("items", {}) if isinstance(ds_cfg, dict) else {}
     preferred_keys = list(items_cfg.keys()) if isinstance(items_cfg, dict) else []
-    for item_key in preferred_keys:
-        windows = by_key.get(item_key, [])
-        if windows:
-            return windows
-    for windows in by_key.values():
-        if windows:
-            return windows
-    return None
+    flattened = _flatten_item_window_map(by_key, preferred_keys)
+    return flattened or None
 
 
 def _coerce_time_window_group_value_for_component(
@@ -541,7 +581,8 @@ def _coerce_time_window_group_value_for_component(
         items_cfg = ds_cfg.get("items", {}) if isinstance(ds_cfg, dict) else {}
         item_keys = list(items_cfg.keys()) if isinstance(items_cfg, dict) else []
         windows = _coerce_ranges(current_values.get(field_key))
-        items = [{"itemKey": item_key, "windows": windows} for item_key in item_keys]
+        by_item, shared = _to_item_window_map(windows)
+        items = [{"itemKey": item_key, "windows": by_item.get(item_key, shared)} for item_key in item_keys]
         output.append(
             {
                 "datasetKey": dataset_key,
@@ -554,6 +595,7 @@ def _coerce_time_window_group_value_for_component(
 
 def _extract_time_window_group_values_from_component(
     component_value: Any,
+    datasets_config: dict[str, Any],
     dataset_to_field: dict[str, str],
     current_values: dict[str, Any],
 ) -> dict[str, Any]:
@@ -565,7 +607,7 @@ def _extract_time_window_group_values_from_component(
     if not isinstance(component_value, list):
         return updated
 
-    by_dataset: dict[str, list[dict[str, float]]] = {}
+    by_dataset: dict[str, dict[str, list[dict[str, float]]]] = {}
     for entry in component_value:
         if not isinstance(entry, dict):
             continue
@@ -575,18 +617,25 @@ def _extract_time_window_group_values_from_component(
         items = entry.get("items")
         if not isinstance(items, list):
             continue
-        dataset_windows: list[dict[str, float]] = []
+        by_item: dict[str, list[dict[str, float]]] = {}
         for item in items:
             if not isinstance(item, dict):
                 continue
-            windows = _coerce_ranges(item.get("windows"))
-            if windows:
-                dataset_windows = windows
-                break
-        by_dataset[dataset_key] = dataset_windows
+            item_key = str(item.get("itemKey") or "").strip()
+            if not item_key:
+                continue
+            raw_windows = _coerce_ranges(item.get("windows"))
+            windows = [{"min": float(w["min"]), "max": float(w["max"])} for w in raw_windows]
+            by_item[item_key] = windows
+        by_dataset[dataset_key] = by_item
 
     for dataset_key, field_key in dataset_to_field.items():
-        updated[field_key] = by_dataset.get(dataset_key) or None
+        item_windows = by_dataset.get(dataset_key, {})
+        ds_cfg = datasets_config.get(dataset_key, {}) if isinstance(datasets_config, dict) else {}
+        items_cfg = ds_cfg.get("items", {}) if isinstance(ds_cfg, dict) else {}
+        item_keys = list(items_cfg.keys()) if isinstance(items_cfg, dict) else []
+        flattened = _flatten_item_window_map(item_windows, item_keys)
+        updated[field_key] = flattened or None
     return updated
 
 
@@ -667,7 +716,7 @@ def _render_time_window_v2(
 
     mode = _time_window_mode(schema, root_schema)
     if mode != "window_list":
-        st.error("time_window schema invalid. Expected List[TimeWindow] (or Optional[List[TimeWindow]]).")
+        st.error("time_window schema invalid. Expected Optional[list[TimeWindow]].")
         return value
 
     loading_slot = st.empty()
@@ -851,7 +900,7 @@ def render_schema_grid(
                         group_schema = bind_to_field[active_datasets[0]][1]
                         mode = _time_window_mode(group_schema, root_schema)
                         if mode != "window_list":
-                            st.error("time_window schema invalid. Expected List[TimeWindow] (or Optional[List[TimeWindow]]).")
+                            st.error("time_window schema invalid. Expected Optional[list[TimeWindow]].")
                         elif not isinstance(run_dir_str, str) or not run_dir_str.strip():
                             st.error("Run context unavailable for time_window widget.")
                         else:
@@ -936,6 +985,7 @@ def render_schema_grid(
         )
         grouped_time_window_values = _extract_time_window_group_values_from_component(
             result_value,
+            datasets_config,
             dataset_to_field,
             current_values,
         )

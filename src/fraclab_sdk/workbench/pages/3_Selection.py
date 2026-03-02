@@ -80,6 +80,17 @@ def _detect_layout(dir_path: Path) -> str | None:
     return None
 
 
+def _apply_default_select_all(selection_model: SelectionModel, snapshot) -> None:
+    """Apply one-time default: select all items for every selectable dataset."""
+    for ds in selection_model.get_selectable_datasets():
+        dataset_key = ds.dataset_key
+        current = selection_model.get_selected(dataset_key)
+        if current:
+            continue
+        item_indices = [idx for idx, _ in snapshot.get_items(dataset_key)]
+        selection_model.set_selected(dataset_key, item_indices)
+
+
 # ==========================================
 # Dialogs
 # ==========================================
@@ -170,6 +181,7 @@ if selected_snapshot_id and selected_algo_key:
         
         try:
             selection_model = SelectionModel.from_snapshot_and_drs(snapshot, algorithm.drs)
+            _apply_default_select_all(selection_model, snapshot)
             st.session_state.selection_model = selection_model
             st.session_state.selection_snapshot_id = selected_snapshot_id
             st.session_state.selection_algorithm_id = algo.algorithm_id

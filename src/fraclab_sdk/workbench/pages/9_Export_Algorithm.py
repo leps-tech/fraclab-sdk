@@ -372,8 +372,6 @@ def build_zip() -> bytes:
         if files:
             manifest_data["files"] = files
 
-        (target_root / "manifest.json").write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
-
         # DRS Override Logic
         files_section = manifest_data.get("files")
         if not isinstance(files_section, dict):
@@ -406,6 +404,9 @@ def build_zip() -> bytes:
             target_drs_path.write_bytes(snap_drs_path.read_bytes())
         else:
             raise ValueError("Selected snapshot is missing drs.json")
+
+        # Persist final manifest after files.* normalization/overrides.
+        (target_root / "manifest.json").write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
 
         # Zip it up (flattened: no top-level version folder)
         zip_buf = io.BytesIO()

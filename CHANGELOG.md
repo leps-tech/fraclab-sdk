@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.1.4 (Unreleased)
+## 0.1.5
+
+### Documentation
+- **OutputContract**: rewrote section to show Pydantic-only usage (`OutputContract`, `OutputDatasetContract`, `*OutputSchema` classes); added explicit error examples for plain dict and missing `type` field.
+- **BlobSchema**: added warning that `BlobOutputSchema(mime=...)` without `type="blob"` triggers `Field required`; all `*OutputSchema` classes require explicit `type`.
+- **TimeWindow structure**: documented per-item `itemKey` structure in `timeWindows_*` params; clarified that `itemKey` sets may be sparse (not 0..N-1 contiguous).
+- **Time value semantics**: added section specifying that `min`/`max` are always epoch seconds (UTC), documenting Workbench time column detection priority, unit normalization rules, and algorithm-side requirements.
+- **`time_window_list()` lint warning**: documented that `FIELD_MISSING_TITLE` warnings are expected and non-blocking; added guidance on suppressing them.
+- **Sparse itemKey**: added notes throughout (Parquet reading, complete example) warning against `range(count)` iteration when matching time windows.
+
+## 0.1.4
 
 ### Algorithm Scaffold & CLI
 - Introduce shared scaffold module `src/fraclab_sdk/algorithm/scaffold.py`; Workbench and CLI now use the same scaffold/base-template source.
@@ -12,7 +22,7 @@
 - Existing repository examples and local `~/.fraclab/algorithms/*/schema/base.py` were aligned to the new base template.
 
 ### Workbench Run: Time Window (New Schema Semantics)
-- Run page time-window rendering now hard-targets `List[TimeWindow]` / `Optional[List[TimeWindow]]` (clean break from old nested shapes).
+- Run page time-window rendering now hard-targets `Optional[List[TimeWindow]]` only (clean break from old nested/non-optional shapes).
 - Multiple time-window schema fields are merged into one unified picker at the bottom of the parameters panel.
 - Unified picker switches dataset internally; constraints are applied per dataset via each field’s `bind_dataset_key`.
 - Matching is based on selected run datasets (`runs/<run_id>/input/ds.json`), not on params `datasetKey`.

@@ -25,10 +25,15 @@ st.markdown("""
     
     /* Tabs 容器布局 */
     [data-baseweb="tab-list"] {
+        display: flex !important;
+        flex-wrap: nowrap !important;
         gap: 8px;
         margin-bottom: 1.5rem;
         padding: 4px 2px; /* 给阴影和动画留出空间，防被切 */
         border-bottom: none !important; /* 去掉一级 tabs 下方多余分割线 */
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        scrollbar-width: thin;
     }
 
     /* BaseWeb 默认 tab 底部分割线（会出现在一级 tabs 下方） */
@@ -40,6 +45,8 @@ st.markdown("""
 
     /* 默认卡片样式 (未选中) */
     [data-baseweb="tab"] {
+        flex: 0 0 auto !important;
+        white-space: nowrap !important;
         background-color: #ffffff !important;
         border: 1px solid #e2e8f0 !important;
         border-radius: 6px !important; /*稍微圆润一点*/
@@ -87,6 +94,7 @@ st.markdown("""
         margin-bottom: 1rem;
         background-color: transparent !important;
         padding: 0 !important;
+        overflow-x: visible !important;
     }
 
     /* 覆盖二级 Tab 样式：去卡片化 */
@@ -544,9 +552,8 @@ if not datasets:
 dataset_options = {d["dataset_key"]: d for d in datasets}
 dataset_keys = list(dataset_options.keys())
 
-# Create the Primary Tabs (Styles applied via CSS)
+# Always use primary tabs; horizontal scrolling handles overflow for large dataset counts.
 dataset_tabs = st.tabs([f"{k} ({dataset_options[k]['item_count']})" for k in dataset_keys])
-
 for tab, key in zip(dataset_tabs, dataset_keys):
     with tab:
         render_dataset_panel(snapshot, dataset_options[key])

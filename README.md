@@ -1,6 +1,6 @@
 # Fraclab SDK Reference
 
-> 版本: 0.1.4
+> 版本: 0.1.5
 > Python: >=3.11
 
 Fraclab SDK 是一个算法开发与执行框架，帮助算法开发者快速构建、测试和部署数据处理算法。
@@ -194,7 +194,7 @@ def run(ctx):
         logger.info(f"数据集 {dataset_key} 包含 {count} 个项目")
 
         for i in range(count):
-            # 读取 NDJSON 对象
+            # 读取 NDJSON 对象（此处 i 是 run_ds 中的连续索引 0..count-1）
             obj = dc.read_object(dataset_key, i)
 
             # 处理数据...
@@ -202,6 +202,18 @@ def run(ctx):
 
             # 写入结果
             aw.write_scalar(f"{dataset_key}_result_{i}", result)
+
+    # ⚠️ 注意: 若需要匹配时间窗的 itemKey，不能用 range(count) 遍历。
+    # timeWindows 中的 itemKey 是选择器输出的标识，可能是稀疏集合（如 00/04/05），
+    # 需要按 itemKey 列表匹配对应的 parquet 目录或 NDJSON 行。
+    # 示例: 按 itemKey 匹配时间窗
+    tw_key = f"timeWindows_{dataset_key}"
+    windows = params.get(tw_key)
+    if windows:
+        for w in windows:
+            item_key = w.get("itemKey")
+            t_min, t_max = w["min"], w["max"]
+            logger.info(f"  item={item_key} window=[{t_min}, {t_max}]")
 
     # 写入汇总结果
     aw.write_json("summary", {"status": "completed", "threshold": threshold})
@@ -319,90 +331,259 @@ class InputParams(BaseModel):
     gain: float = Field(default=1.0)  # 未设置 step，Workbench 按整数样式显示
 ```
 
-#### 时间窗参数（`ui_type="time_window"`，新版）
+#### 时间窗参数（`ui_type="time_window"`）
 
 Run 页面使用一个统一时间窗选择器（位于参数区底部），在组件内切换 dataset。
 
 关键规则：
-- 字段 shape：`List[TimeWindow]` 或 `Optional[List[TimeWindow]]`（`TimeWindow = {min,max}`）。
+- 字段 shape 只允许：`Optional[List[TimeWindow]]`（`TimeWindow = {min,max}`）。
+  - 若使用 `time_window_list()` helper：字段类型直接写 helper 返回的模板类型，不要再写 `Optional[...]`。
+  - 例如：`stage_windows: WindowsTemplate = Field(default=None, ...)`（正确），`Optional[WindowsTemplate]`（错误）。
 - 每个时间窗字段必须配置 `bind_dataset_key`（顶层或 `json_schema_extra`）。
 - 匹配依据是当前 run 的 `input/ds.json` 中已选 dataset keys，不是 params 里的 `datasetKey` 字段。
 - 同一个选择器在切换 dataset 时会套用该 dataset 对应字段的窗口约束（`minItems/maxItems`）。
+- 语义约定（必须统一）：
+  - `null` 表示“未启用该模板”（推荐默认值）
+  - `[]` 不允许作为有效值（建议 `minItems >= 1`）；若用户删空窗口，应回写为 `null`
 - 若定义 `window_slots` 与 `window_slot_fallback_note`，图像上方会显示“下一时间窗”备注：
   - 还未选窗：显示第 1 条备注
   - 选完第 1 个窗后：显示第 2 条备注
   - 依次类推；超出后显示 fallback 备注
 
-<a id="quickstart-output-contract"></a>
-### 2.5 定义输出合约 (OutputContract)
-
-创建 `schema/output_contract.py` 声明算法的输出结构：
+可复制示例（推荐）：
 
 ```python
-# schema/output_contract.py
+from __future__ import annotations
 
-OUTPUT_CONTRACT = {
-    "datasets": [
-        {
-            "key": "metrics",
-            "kind": "scalar",
-            "owner": "well",
-            "cardinality": "many",
-            "required": True,
-            "dimensions": ["stage"],
-            "schema": {"type": "scalar", "dtype": "float"},
-            "role": "primary",
-            "description": "每个井/阶段的评估指标"
-        },
-        {
-            "key": "summary",
-            "kind": "object",
-            "owner": "platform",
-            "cardinality": "one",
-            "required": True,
-            "dimensions": [],
-            "schema": {"type": "object"},
-            "role": "primary",
-            "description": "汇总结果"
-        },
-        {
-            "key": "debug_plots",
-            "kind": "blob",
-            "owner": "well",
-            "cardinality": "many",
-            "required": False,
-            "dimensions": [],
-            "schema": {"type": "blob", "mime": "image/png"},
-            "role": "debug",
-            "description": "调试图表 (可选)"
-        }
-    ]
+from pydantic import BaseModel, Field
+
+from .base import schema_extra, show_when_condition, time_window_list
+
+WindowsTemplate_1to3 = time_window_list(
+    min_items=1,
+    max_items=3,
+    title="Windows",
+    description="Template windows (1..3).",
+)
+
+WindowsTemplate_2 = time_window_list(
+    min_items=2,
+    max_items=2,
+    title="Windows",
+    description="Template windows (exactly 2).",
+)
+
+
+class INPUT_SPEC(BaseModel):
+    emitDebugArtifacts: bool = Field(
+        default=True,
+        json_schema_extra=schema_extra(group="Plots", order=20),
+    )
+
+    # 注意：time_window_list() 已经是 Optional[list[TimeWindow]]，不要再包 Optional[...]
+    timeWindows_fracRecord_stage_5712: WindowsTemplate_1to3 = Field(
+        default=None,
+        title="Time Windows (fracRecord_stage_5712)",
+        json_schema_extra=schema_extra(
+            group="Plots",
+            order=23,
+            ui_type="time_window",
+            unit="s",
+            bind_dataset_key="fracRecord_stage_5712",
+            show_when=show_when_condition("emitDebugArtifacts", op="equals", value=True),
+            window_slots=[
+                {"title": "Window 1", "note": "Primary interval."},
+                {"title": "Window 2", "note": "Secondary interval."},
+                {"title": "Window 3", "note": "Optional baseline interval."},
+            ],
+            window_slot_fallback_note="Pick an interval consistent with the algorithm expectation.",
+        ),
+    )
+
+    timeWindows_fracRecord_stage_9072: WindowsTemplate_2 = Field(
+        default=None,
+        title="Time Windows (fracRecord_stage_9072)",
+        json_schema_extra=schema_extra(
+            group="Plots",
+            order=24,
+            ui_type="time_window",
+            unit="s",
+            bind_dataset_key="fracRecord_stage_9072",
+            show_when=show_when_condition("emitDebugArtifacts", op="equals", value=True),
+            window_slots=[
+                {"title": "Window 1", "note": "Primary interval."},
+                {"title": "Window 2", "note": "Secondary interval."},
+            ],
+            window_slot_fallback_note="Pick an interval consistent with the algorithm expectation.",
+        ),
+    )
+```
+
+注意：
+- 可以定义多个时间窗字段，但 Run 页面只渲染一个统一选择器。
+- 统一选择器内部切换 dataset，并自动使用对应 `bind_dataset_key` 字段的约束和备注。
+- 每个 `bind_dataset_key` 只能对应一个时间窗字段（重复绑定会报错）。
+- `bind_dataset_key` 必须与该算法 DRS（`dist/drs.json`）中的 `datasets[*].key` 一致；不一致会导致运行期无法绑定到 selector items。
+- `time_window_list()` 返回值已内置 `Optional[list[TimeWindow]]`，调用方不要写成 `Optional[time_window_list(...)]`（会产生双重 Optional schema，增加 UI/校验歧义）。
+
+> **已知 lint warning**: `time_window_list()` 生成的 `TimeWindow` 子字段（`min`/`max`/`itemKey`）在
+> JSON Schema 的 `$defs` 中已有 `title`，但 Pydantic 生成的 `timeWindows_*` 顶层字段本身
+> 可能产生额外的 leaf 节点缺少 `title`，导致 `FIELD_MISSING_TITLE` warning（每个 `timeWindows_*` 字段一条）。
+> 此 warning **不影响校验通过**（validate 仍然 `valid=True`），仅表示 UI 显示可能缺少中文标签。
+> 若要消除 warning，可在 `Field(...)` 中显式传入 `title` 参数。
+
+#### TimeWindow 运行时结构
+
+选择器输出到 `params.json` 的 `timeWindows_<datasetKey>` 值为 **per-item 窗口列表**，每条记录包含 `itemKey`：
+
+```json
+{
+  "timeWindows_fracRecord_stage_5712": [
+    {"itemKey": "00000", "min": 1768521600.0, "max": 1768522800.0},
+    {"itemKey": "00004", "min": 1768530000.0, "max": 1768531200.0},
+    {"itemKey": "00005", "min": 1768535000.0, "max": 1768536000.0}
+  ]
 }
 ```
 
-#### OutputContract 字段规范
+关键点：
+- **`itemKey`**: 标识选中项在 dataset 中的编号（如 `"00000"`、`"00004"`）。**`itemKey` 集合可以是稀疏的**（不保证 0..N-1 连续），算法必须按选中 itemKey 列表处理，禁止按连续索引 `range(count)` 遍历。
+- **`min`/`max`**: 时间窗边界，**统一为 epoch seconds (UTC)**。
+- 若该 dataset 未启用时间窗（用户未选），值为 `null`。
+- 空列表 `[]` 不是合法值（建议 `minItems >= 1`）。
+
+#### 时间值语义与单位规范
+
+**统一规则：时间窗 `min`/`max` 始终为 epoch seconds (UTC)。**
+
+| 来源 | 说明 |
+|------|------|
+| Workbench 选择器输出 | 无论图表如何显示，`min`/`max` 一律归一化为 epoch 秒后写入 `params.json` |
+| 算法内部处理 | 必须与时间窗同单位（epoch 秒）；禁止"时间列 ms、窗口 s"混用 |
+| Parquet/NDJSON 原始时间列 | Workbench 会自动推断单位（ns/us/ms/s）并归一化，但算法读取原始数据时需自行对齐 |
+
+**Workbench 时间列识别优先级（大小写不敏感）：**
+
+`timestamp` > `ts` > `time` > `datetime` > `bucket`
+
+Workbench 会从上述候选列中选一个作为 x 轴，并按以下规则归一化：
+- 数值时间戳：推断单位（ns/us/ms/s），归一到 epoch 秒
+- datetime 列：统一到 UTC 后转 epoch 秒
+
+**算法侧强制要求：**
+1. 算法读取数据后，必须将时间列归一到 epoch 秒后再与窗口 `min`/`max` 做比较
+2. 在算法启动时记录日志：检测到的时间类型、归一化单位、首尾时间戳
+3. 对窗口做入参校验：若窗口超出数据范围，应报 warning
+
+**常见错误排查：**
+- **症状**：图上窗口看起来正确，但算法输出切片偏移/空结果
+- **原因**：算法把 datetime 误判为 numeric，或 numeric 未做单位对齐
+- **排查**：打印 time mode、time_col dtype、window min/max、data time range
+
+迁移提示（旧写法 -> 新写法）：
+- `List[List[TimeWindow]]` -> `Optional[list[TimeWindow]]`
+- `FloatRange`（单对象）-> `Optional[list[TimeWindow]]`
+- `List[TimeWindow]`（非 Optional）-> `Optional[list[TimeWindow]]`
+
+<a id="quickstart-output-contract"></a>
+### 2.5 定义输出合约 (OutputContract)
+
+创建 `schema/output_contract.py` 声明算法的输出结构。
+
+**`OUTPUT_CONTRACT` 必须是 Pydantic 模型实例**（与 `INPUT_SPEC` 一样）。SDK 的 validate / compile 调用 `.model_dump()` 将其序列化为 JSON。不要写 plain dict——会导致 `AttributeError: 'dict' object has no attribute 'dict'`。
+
+```python
+# schema/output_contract.py
+from fraclab_sdk.models.output_contract import (
+    BlobOutputSchema,
+    ObjectOutputSchema,
+    OutputContract,
+    OutputDatasetContract,
+    ScalarOutputSchema,
+)
+
+OUTPUT_CONTRACT = OutputContract(
+    datasets=[
+        OutputDatasetContract(
+            key="metrics",
+            kind="scalar",
+            owner="well",
+            cardinality="many",
+            required=True,
+            dimensions=["stage"],
+            schema=ScalarOutputSchema(type="scalar", dtype="float"),
+            role="primary",
+            description="每个井/阶段的评估指标",
+        ),
+        OutputDatasetContract(
+            key="summary",
+            kind="object",
+            owner="platform",
+            cardinality="one",
+            required=True,
+            schema=ObjectOutputSchema(type="object"),
+            role="primary",
+            description="汇总结果",
+        ),
+        OutputDatasetContract(
+            key="debug_plots",
+            kind="blob",
+            owner="well",
+            cardinality="many",
+            required=False,
+            schema=BlobOutputSchema(type="blob", mime="image/png"),
+            role="debug",
+            description="调试图表 (可选)",
+        ),
+    ]
+)
+```
+
+> **常见错误**:
+> ```python
+> # ❌ plain dict → validate 时 AttributeError
+> OUTPUT_CONTRACT = {"datasets": [...]}
+>
+> # ❌ BlobOutputSchema 缺少 type → Field required
+> schema=BlobOutputSchema(mime="image/png")
+>
+> # ✅ 正确写法
+> schema=BlobOutputSchema(type="blob", mime="image/png")
+> ```
+
+#### Schema 类型一览
+
+| 导入类 | `type` 值 (必填) | 可选字段 | 对应 `kind` |
+|--------|------------------|---------|------------|
+| `ScalarOutputSchema` | `"scalar"` | `dtype` (`"float"` / `"int"` / `"string"` / `"bool"`), `precision` | `"scalar"` |
+| `ObjectOutputSchema` | `"object"` | — | `"object"` |
+| `BlobOutputSchema` | `"blob"` | `mime` (如 `"image/png"`), `ext` (如 `".png"`) | `"blob"` |
+| `FrameOutputSchema` | `"frame"` | `index` (`"time"` / `"depth"` / `"none"`) | `"frame"` |
+
+所有 schema 类的 `type` 字段均为 **`Literal` 必填**，不提供会触发 Pydantic `Field required` 错误。
+
+#### OutputDatasetContract 字段规范
 
 | 字段 | 必填 | 类型 | 可选值 | 说明 |
 |------|------|------|--------|------|
-| `key` | **是** | string | - | 数据集唯一键名 |
-| `kind` | **是** | string | `"scalar"` / `"object"` / `"blob"` / `"frame"` | 数据类型 |
-| `owner` | **是** | string | `"stage"` / `"well"` / `"platform"` | 所有者级别 |
-| `cardinality` | 否 | string | `"one"` / `"many"` | 项目数量约束，默认 `"many"` |
-| `required` | 否 | bool | - | 是否必须产出，默认 `true` |
-| `dimensions` | 否 | string[] | - | 维度键列表 |
-| `schema` | **是** | object | - | 数据 schema |
-| `schema.type` | **是** | string | 与 `kind` 对应 | schema 类型标识 |
-| `role` | 否 | string | `"primary"` / `"supporting"` / `"debug"` | 输出角色 |
-| `description` | 否 | string | - | 描述说明 |
+| `key` | **是** | `str` | — | 数据集唯一键名 |
+| `kind` | **是** | `Literal` | `"scalar"` / `"object"` / `"blob"` / `"frame"` | 数据类型 |
+| `owner` | **是** | `Literal` | `"stage"` / `"well"` / `"platform"` | 所有者级别 |
+| `cardinality` | 否 | `Literal` | `"one"` / `"many"` | 项目数量约束，默认 `"many"` |
+| `required` | 否 | `bool` | — | 是否必须产出，默认 `True` |
+| `dimensions` | 否 | `list[str]` | — | 维度键列表 |
+| `schema` | **是** | `*OutputSchema` | — | 上方 Schema 类之一 |
+| `role` | 否 | `Literal` | `"primary"` / `"supporting"` / `"debug"` | 输出角色 |
+| `description` | 否 | `str` | — | 描述说明 |
 
-#### kind 与 schema.type 对应关系
+#### kind 与 ArtifactWriter 方法对应
 
-| kind | schema.type | ArtifactWriter 方法 | 说明 |
-|------|-------------|---------------------|------|
-| `"scalar"` | `"scalar"` | `write_scalar()` | 标量值 (数字/字符串/布尔) |
-| `"object"` | `"object"` | `write_json()` | JSON 对象 |
-| `"blob"` | `"blob"` | `write_blob()` / `write_file()` | 二进制文件 |
-| `"frame"` | `"frame"` | (暂不支持) | 表格数据 |
+| kind | ArtifactWriter 方法 | 说明 |
+|------|---------------------|------|
+| `"scalar"` | `write_scalar()` | 标量值 (数字/字符串/布尔) |
+| `"object"` | `write_json()` | JSON 对象 |
+| `"blob"` | `write_blob()` / `write_file()` | 二进制文件 |
+| `"frame"` | (暂不支持) | 表格数据 |
 
 #### owner 级别说明
 
@@ -416,15 +597,15 @@ OUTPUT_CONTRACT = {
 
 | cardinality | 含义 | 验证规则 |
 |-------------|------|----------|
-| `"one"` | 恰好一个项目 | required=true 时必须 1 项; required=false 时最多 1 项 |
-| `"many"` | 一个或多个 | required=true 时至少 1 项; required=false 时 0 项或多项 |
+| `"one"` | 恰好一个项目 | required=True 时必须 1 项; required=False 时最多 1 项 |
+| `"many"` | 一个或多个 | required=True 时至少 1 项; required=False 时 0 项或多项 |
 
 #### dimensions 使用
 
 当数据集有维度约束时，写入时必须提供对应的 `dims`:
 
 ```python
-# OutputContract 定义: dimensions: ["stage", "iteration"]
+# OutputContract 定义: dimensions=["stage", "iteration"]
 aw.write_scalar(
     "loss",
     0.05,
@@ -463,7 +644,7 @@ aw.write_scalar(
     "drsPath": "dist/drs.json"
   },
   "requires": {
-    "sdk": "0.1.4",
+    "sdk": "0.1.5",
     "core": "1.0.0"
   },
   "repository": "https://github.com/example/my-algorithm",
@@ -769,6 +950,11 @@ import pandas as pd
 df = pd.read_parquet(parquet_dir)
 ```
 
+> **注意**: Parquet item 目录命名为 `item-{index:05d}`（5 位零填充）。当结合时间窗使用时，
+> `timeWindows` 中的 `itemKey`（如 `"00000"`、`"00004"`）直接对应目录名中的编号。
+> 若选择器选择了稀疏 item（如 00/04/05 而非 00/01/02），算法应按 `itemKey` 定位
+> 对应的 `item-00000/`、`item-00004/`、`item-00005/` 目录，**不可假设 item 连续**。
+
 ### ArtifactWriter - 写入输出结果
 
 `ArtifactWriter` 提供安全的输出写入机制，自动防止路径逃逸攻击。
@@ -908,25 +1094,32 @@ aw.write_scalar(
 **OutputContract 定义** (`schema/output_contract.py`):
 
 ```python
-OUTPUT_CONTRACT = {
-    "datasets": [
-        {
-            "key": "metrics",
-            "kind": "scalar",
-            "owner": "well",
-            "cardinality": "many",
-            "dimensions": ["stage"],
-            "schema": {"type": "scalar", "dtype": "float"}
-        },
-        {
-            "key": "reports",
-            "kind": "blob",
-            "owner": "well",
-            "cardinality": "one",
-            "schema": {"type": "blob", "mime": "application/pdf"}
-        }
+from fraclab_sdk.models.output_contract import (
+    BlobOutputSchema,
+    OutputContract,
+    OutputDatasetContract,
+    ScalarOutputSchema,
+)
+
+OUTPUT_CONTRACT = OutputContract(
+    datasets=[
+        OutputDatasetContract(
+            key="metrics",
+            kind="scalar",
+            owner="well",
+            cardinality="many",
+            dimensions=["stage"],
+            schema=ScalarOutputSchema(type="scalar", dtype="float"),
+        ),
+        OutputDatasetContract(
+            key="reports",
+            kind="blob",
+            owner="well",
+            cardinality="one",
+            schema=BlobOutputSchema(type="blob", mime="application/pdf"),
+        ),
     ]
-}
+)
 ```
 
 **对应的算法写入代码**:
@@ -1555,8 +1748,8 @@ keys = ds.get_dataset_keys()
 from fraclab_sdk.models import OutputContract
 
 contract = OutputContract.model_validate_json(json_string)
-dataset = contract.get_dataset("results")
-artifacts = contract.get_all_artifacts()
+dataset = contract.get_dataset("results")  # OutputDatasetContract | None
+print(contract.datasets)                   # list[OutputDatasetContract]
 ```
 
 ### RunOutputManifest

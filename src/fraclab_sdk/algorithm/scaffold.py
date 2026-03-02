@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 from fraclab_sdk.version import __version__ as SDK_VERSION
@@ -99,6 +101,7 @@ def opt_bool(title: str) -> Any:
 # -----------------------------
 class TimeWindow(BaseModel):
     """A single picked window on a curve."""
+    itemKey: Optional[str] = Field(default=None, title="Item Key")
     min: float = Field(title="Start")
     max: float = Field(title="End")
 
@@ -108,6 +111,8 @@ class TimeWindow(BaseModel):
     def _validate_order(self) -> "TimeWindow":
         if self.max < self.min:
             raise ValueError("TimeWindow.max must be >= min")
+        if self.itemKey is not None and not str(self.itemKey).strip():
+            raise ValueError("TimeWindow.itemKey cannot be empty when provided")
         return self
 
 
@@ -118,14 +123,15 @@ def time_window_list(
     title: str = "Windows",
     description: str = "List of time windows.",
 ) -> Any:
-    """Return Annotated[list[TimeWindow], Field(min_length/max_length...)].
+    """Return Annotated[Optional[list[TimeWindow]], Field(min_length/max_length...)].
 
     Use in schema files to define datasetKey-specific templates, e.g. 1..3 or exactly 2.
+    The type is Optional so the field can default to None (no windows selected yet).
     """
     kwargs: dict[str, Any] = {"min_length": min_items, "title": title, "description": description}
     if max_items is not None:
         kwargs["max_length"] = max_items
-    return Annotated[list[TimeWindow], Field(**kwargs)]
+    return Annotated[Optional[list[TimeWindow]], Field(**kwargs)]
 '''
 
 
@@ -157,7 +163,15 @@ def create_algorithm_scaffold(
     ws_dir = workspace_root / algo_id / code_version
     if ws_dir.exists():
         raise FileExistsError(f"Algorithm workspace already exists: {ws_dir}")
-    ws_dir.mkdir(parents=True, exist_ok=True)
+
+    parent_dir = ws_dir.parent
+    parent_dir.mkdir(parents=True, exist_ok=True)
+    tmp_dir = Path(
+        tempfile.mkdtemp(
+            prefix=f".tmp-{algo_id}-{code_version}-",
+            dir=str(parent_dir),
+        )
+    )
 
     authors_list = [
         {
@@ -191,21 +205,22 @@ def create_algorithm_scaffold(
         "license": None,
     }
 
-    (ws_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    try:
+        (tmp_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-    dist_dir = ws_dir / "dist"
-    dist_dir.mkdir(parents=True, exist_ok=True)
-    (dist_dir / "ds.json").write_text(json.dumps({"datasets": []}, indent=2), encoding="utf-8")
-    (dist_dir / "params.schema.json").write_text(
-        json.dumps({"type": "object", "title": "Parameters", "properties": {}}, indent=2),
-        encoding="utf-8",
-    )
-    (dist_dir / "output_contract.json").write_text(
-        json.dumps({"datasets": [], "invariants": [], "relations": []}, indent=2),
-        encoding="utf-8",
-    )
+        dist_dir = tmp_dir / "dist"
+        dist_dir.mkdir(parents=True, exist_ok=True)
+        (dist_dir / "ds.json").write_text(json.dumps({"datasets": []}, indent=2), encoding="utf-8")
+        (dist_dir / "params.schema.json").write_text(
+            json.dumps({"type": "object", "title": "Parameters", "properties": {}}, indent=2),
+            encoding="utf-8",
+        )
+        (dist_dir / "output_contract.json").write_text(
+            json.dumps({"datasets": [], "invariants": [], "relations": []}, indent=2),
+            encoding="utf-8",
+        )
 
-    main_stub = '''"""Algorithm entrypoint."""
+        main_stub = '''"""Algorithm entrypoint."""
 
 from __future__ import annotations
 
@@ -214,7 +229,12 @@ def run(ctx) -> None:
     # TODO: replace with real logic
     ctx.logger.info("algorithm scaffold run")
 '''
-    (ws_dir / "main.py").write_text(main_stub, encoding="utf-8")
+        (tmp_dir / "main.py").write_text(main_stub, encoding="utf-8")
 
-    ensure_schema_base(ws_dir / "schema")
-    return ws_dir
+        ensure_schema_base(tmp_dir / "schema")
+
+        tmp_dir.replace(ws_dir)
+        return ws_dir
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise
