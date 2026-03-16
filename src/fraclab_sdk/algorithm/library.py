@@ -2,26 +2,18 @@
 
 import json
 import shutil
-import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from fraclab_sdk.config import SDKConfig
-from fraclab_sdk.errors import AlgorithmError, PathTraversalError
+from fraclab_sdk.errors import AlgorithmError
 from fraclab_sdk.models import DRS
 from fraclab_sdk.models.algorithm_manifest import FracLabAlgorithmManifestV1
-from fraclab_sdk.utils.io import atomic_write_json
-
-
-def _is_safe_path(path: str) -> bool:
-    """Check if a path is safe (no traversal attacks)."""
-    if path.startswith("/") or path.startswith("\\"):
-        return False
-    if ".." in path:
-        return False
-    return not any(c in path for c in [":", "*", "?", '"', "<", ">", "|"])
+from fraclab_sdk.utils.json_index_store import JsonIndexStore
+from fraclab_sdk.utils.path_safety import is_safe_relative_path
+from fraclab_sdk.utils.zip_import import extract_zip_and_find_root
 
 
 @dataclass
@@ -72,7 +64,7 @@ class AlgorithmHandle:
         """Resolve and validate a file path declared in manifest.json under files.*."""
         if not isinstance(rel, str) or not rel:
             raise AlgorithmError(f"Invalid manifest.files.{field_name}: {rel!r}")
-        if not _is_safe_path(rel):
+        if not is_safe_relative_path(rel):
             raise AlgorithmError(f"Unsafe manifest path files.{field_name}: {rel}")
         p = (self._dir / rel).resolve()
         if not p.exists():
@@ -111,84 +103,52 @@ class AlgorithmHandle:
         return main_path
 
 
+def _algo_to_entry(meta: AlgorithmMeta) -> dict[str, Any]:
+    return {
+        "algorithm_id": meta.algorithm_id,
+        "version": meta.version,
+        "contract_version": meta.contract_version,
+        "name": meta.name,
+        "summary": meta.summary,
+        "notes": meta.notes,
+        "imported_at": meta.imported_at,
+    }
+
+
+def _algo_from_entry(entry: dict[str, Any]) -> AlgorithmMeta:
+    return AlgorithmMeta(
+        algorithm_id=entry["algorithm_id"],
+        version=entry["version"],
+        contract_version=entry.get("contract_version", ""),
+        name=entry.get("name", ""),
+        summary=entry.get("summary", ""),
+        notes=entry.get("notes"),
+        imported_at=entry.get("imported_at", ""),
+    )
+
+
 class AlgorithmIndex:
     """Manages the algorithm index file."""
 
     def __init__(self, algorithms_dir: Path) -> None:
-        """Initialize algorithm index."""
-        self._algorithms_dir = algorithms_dir
-        self._index_path = algorithms_dir / "index.json"
-
-    def _load(self) -> dict[str, dict]:
-        """Load index from disk."""
-        if not self._index_path.exists():
-            return {}
-        return json.loads(self._index_path.read_text())
-
-    def _save(self, data: dict[str, dict]) -> None:
-        """Save index to disk."""
-        self._algorithms_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self._index_path, data)
-
-    def _make_key(self, algorithm_id: str, version: str) -> str:
-        """Create index key from algorithm_id and version."""
-        return f"{algorithm_id}:{version}"
-
-    def add(self, meta: AlgorithmMeta) -> None:
-        """Add an algorithm to the index."""
-        data = self._load()
-        key = self._make_key(meta.algorithm_id, meta.version)
-        data[key] = {
-            "algorithm_id": meta.algorithm_id,
-            "version": meta.version,
-            "contract_version": meta.contract_version,
-            "name": meta.name,
-            "summary": meta.summary,
-            "notes": meta.notes,
-            "imported_at": meta.imported_at,
-        }
-        self._save(data)
-
-    def remove(self, algorithm_id: str, version: str) -> None:
-        """Remove an algorithm from the index."""
-        data = self._load()
-        key = self._make_key(algorithm_id, version)
-        if key in data:
-            del data[key]
-            self._save(data)
-
-    def get(self, algorithm_id: str, version: str) -> AlgorithmMeta | None:
-        """Get algorithm metadata."""
-        data = self._load()
-        key = self._make_key(algorithm_id, version)
-        if key not in data:
-            return None
-        entry = data[key]
-        return AlgorithmMeta(
-            algorithm_id=entry["algorithm_id"],
-            version=entry["version"],
-            contract_version=entry.get("contract_version", ""),
-            name=entry.get("name", ""),
-            summary=entry.get("summary", ""),
-            notes=entry.get("notes"),
-            imported_at=entry.get("imported_at", ""),
+        self._store: JsonIndexStore[AlgorithmMeta] = JsonIndexStore(
+            algorithms_dir,
+            make_key=lambda m: f"{m.algorithm_id}:{m.version}",
+            to_entry=_algo_to_entry,
+            from_entry=_algo_from_entry,
         )
 
+    def add(self, meta: AlgorithmMeta) -> None:
+        self._store.add(meta)
+
+    def remove(self, algorithm_id: str, version: str) -> None:
+        self._store.remove(f"{algorithm_id}:{version}")
+
+    def get(self, algorithm_id: str, version: str) -> AlgorithmMeta | None:
+        return self._store.get(f"{algorithm_id}:{version}")
+
     def list_all(self) -> list[AlgorithmMeta]:
-        """List all indexed algorithms."""
-        data = self._load()
-        return [
-            AlgorithmMeta(
-                algorithm_id=entry["algorithm_id"],
-                version=entry["version"],
-                contract_version=entry.get("contract_version", ""),
-                name=entry.get("name", ""),
-                summary=entry.get("summary", ""),
-                notes=entry.get("notes"),
-                imported_at=entry.get("imported_at", ""),
-            )
-            for entry in data.values()
-        ]
+        return self._store.list_all()
 
 
 class AlgorithmLibrary:
@@ -232,30 +192,12 @@ class AlgorithmLibrary:
 
     def _import_from_zip(self, zip_path: Path) -> tuple[str, str]:
         """Import algorithm from zip file."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-
-            with zipfile.ZipFile(zip_path) as zf:
-                for name in zf.namelist():
-                    if not _is_safe_path(name):
-                        raise PathTraversalError(name)
-                zf.extractall(tmp_path)
-
-            algorithm_root = self._find_algorithm_root(tmp_path)
-            return self._import_from_dir(algorithm_root)
-
-    def _find_algorithm_root(self, path: Path) -> Path:
-        """Find the algorithm root directory (contains manifest.json)."""
-        if (path / "manifest.json").exists():
-            return path
-
-        for subdir in path.iterdir():
-            if subdir.is_dir() and (subdir / "manifest.json").exists():
-                return subdir
-
-        raise AlgorithmError(f"No manifest.json found in {path}")
+        try:
+            root, tmp_dir = extract_zip_and_find_root(zip_path)
+        except FileNotFoundError as exc:
+            raise AlgorithmError(str(exc)) from exc
+        with tmp_dir:
+            return self._import_from_dir(root)
 
     def _import_from_dir(self, source_dir: Path) -> tuple[str, str]:
         """Import algorithm from directory."""
@@ -280,7 +222,7 @@ class AlgorithmLibrary:
         ]
 
         for field_name, file_path_str in required_files:
-            if not _is_safe_path(file_path_str):
+            if not is_safe_relative_path(file_path_str):
                 raise AlgorithmError(
                     f"Unsafe manifest path files.{field_name}: {file_path_str}"
                 )
@@ -291,7 +233,7 @@ class AlgorithmLibrary:
         for field_name, file_path_str in optional_files:
             if not file_path_str:
                 continue
-            if not _is_safe_path(file_path_str):
+            if not is_safe_relative_path(file_path_str):
                 raise AlgorithmError(
                     f"Unsafe manifest path files.{field_name}: {file_path_str}"
                 )

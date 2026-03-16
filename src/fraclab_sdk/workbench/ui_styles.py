@@ -2,9 +2,28 @@
 
 import streamlit as st
 
+from fraclab_sdk.workbench.i18n import render_language_toolbar, render_sidebar_navigation
 
-def apply_global_styles():
+
+def render_page_header(title: str) -> None:
+    """Render a page title with the language switch anchored on the right."""
+    title_col, toolbar_col = st.columns([0.78, 0.22], gap="small")
+    with title_col:
+        st.title(title)
+    with toolbar_col:
+        render_language_toolbar()
+
+
+def render_page_toolbar() -> None:
+    """Render the page-level toolbar without a title."""
+    _, toolbar_col = st.columns([0.78, 0.22], gap="small")
+    with toolbar_col:
+        render_language_toolbar()
+
+
+def apply_global_styles(current_page: str | None = None):
     """Inject global CSS to hide Streamlit UI elements and apply common styling."""
+    render_sidebar_navigation(current_page)
     st.markdown("""
     <style>
         /* =================================
@@ -27,7 +46,7 @@ def apply_global_styles():
             min-width: 260px;
         }
         [data-testid="stSidebarNav"] {
-            min-width: 240px;
+            display: none !important;
         }
         [data-testid="collapsedControl"] {
             display: none !important;

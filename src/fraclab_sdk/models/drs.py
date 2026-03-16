@@ -8,10 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 class DRSDataset(BaseModel):
     """A dataset requirement in a DRS."""
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore")
 
-    datasetKey: str = Field(alias="key")
-    resourceType: str | None = Field(default=None, alias="resource")
+    datasetKey: str
+    resourceType: str | None = None
     cardinality: Literal["one", "many", "zeroOrMany"] = "many"
     description: str | None = None
 
@@ -22,7 +22,7 @@ class DRS(BaseModel):
     Defines what data an algorithm requires as input.
     """
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore")
 
     schemaVersion: str | None = None
     datasets: list[DRSDataset] = Field(default_factory=list)
@@ -30,9 +30,9 @@ class DRS(BaseModel):
     @field_validator("datasets", mode="before")
     @classmethod
     def _coerce_datasets(cls, v):
-        """Accept mapping form {'key': {...}} by converting to list."""
+        """Accept mapping form {'datasetKey': {...}} by converting to list."""
         if isinstance(v, dict):
-            return [{"key": k, **(val or {})} for k, val in v.items()]
+            return [{"datasetKey": k, **(val or {})} for k, val in v.items()]
         return v
 
     def get_dataset(self, dataset_key: str) -> DRSDataset | None:

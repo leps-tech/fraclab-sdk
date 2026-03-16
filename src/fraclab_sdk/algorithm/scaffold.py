@@ -21,38 +21,46 @@ from __future__ import annotations
 
 from typing import Any, Annotated, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.alias_generators import to_camel
 from pydantic.json_schema import WithJsonSchema
 
 
 # -----------------------------
-# show_when helpers
+# Camel base model
 # -----------------------------
-def show_when_condition(field: str, op: str = "equals", value: Any = True) -> dict[str, Any]:
+class CamelModel(BaseModel):
+    model_config = ConfigDict(alias_generator=to_camel)
+
+
+# -----------------------------
+# showWhen helpers
+# -----------------------------
+def showWhenCondition(field: str, op: str = "equals", value: Any = True) -> dict[str, Any]:
     return {"field": field, "op": op, "value": value}
 
 
-def show_when_and(*conditions: dict[str, Any]) -> dict[str, Any]:
+def showWhenAnd(*conditions: dict[str, Any]) -> dict[str, Any]:
     return {"and": list(conditions)}
 
 
-def show_when_or(*conditions: dict[str, Any]) -> dict[str, Any]:
+def showWhenOr(*conditions: dict[str, Any]) -> dict[str, Any]:
     return {"or": list(conditions)}
 
 
 # -----------------------------
 # json_schema_extra helper
 # -----------------------------
-def schema_extra(
+def schemaExtra(
     *,
     group: str | None = None,
     order: int | None = None,
     unit: str | None = None,
     step: float | None = None,
-    ui_type: str | None = None,
+    uiType: str | None = None,
     collapsible: bool | None = None,
-    show_when: dict[str, Any] | None = None,
-    enum_labels: dict[str, str] | None = None,
+    showWhen: dict[str, Any] | None = None,
+    enumLabels: dict[str, str] | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
@@ -64,14 +72,14 @@ def schema_extra(
         result["unit"] = unit
     if step is not None:
         result["step"] = step
-    if ui_type is not None:
-        result["ui_type"] = ui_type
+    if uiType is not None:
+        result["uiType"] = uiType
     if collapsible is not None:
         result["collapsible"] = collapsible
-    if show_when is not None:
-        result["show_when"] = show_when
-    if enum_labels is not None:
-        result["enum_labels"] = enum_labels
+    if showWhen is not None:
+        result["showWhen"] = showWhen
+    if enumLabels is not None:
+        result["enumLabels"] = enumLabels
     result.update(kwargs)
     return result
 
@@ -99,7 +107,7 @@ def opt_bool(title: str) -> Any:
 # -----------------------------
 # Shared: time window models
 # -----------------------------
-class TimeWindow(BaseModel):
+class TimeWindow(CamelModel):
     """A single picked window on a curve."""
     itemKey: Optional[str] = Field(default=None, title="Item Key")
     min: float = Field(title="Start")

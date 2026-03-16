@@ -12,6 +12,14 @@
 src/**/__pycache__/
 src/**/*.pyc
 
+# Keep tests
+!tests/
+!tests/**
+
+# Exclude generated Python cache under tests
+tests/**/__pycache__/
+tests/**/*.pyc
+
 # Keep package/release metadata docs
 !pyproject.toml
 !README.md

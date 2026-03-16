@@ -14,6 +14,7 @@ from typing import Any
 
 from fraclab_sdk.runtime.artifacts import ArtifactWriter
 from fraclab_sdk.runtime.data_client import DataClient
+from fraclab_sdk.runtime.fonts import configure_matplotlib_runtime_fonts
 
 
 def validate_manifest_against_contract(
@@ -49,7 +50,7 @@ def validate_manifest_against_contract(
 
     # Get all artifact keys from manifest (flat list)
     manifest_artifact_keys = {
-        a.get("artifactKey") or a.get("key")
+        a.get("artifactKey")
         for a in manifest.get("artifacts", [])
     }
     manifest_artifact_keys.discard(None)
@@ -58,7 +59,7 @@ def validate_manifest_against_contract(
     for ds in manifest.get("datasets", []):
         for item in ds.get("items", []):
             for art in item.get("artifacts", []):
-                key = art.get("artifactKey") or art.get("key")
+                key = art.get("artifactKey")
                 if key:
                     manifest_artifact_keys.add(key)
 
@@ -205,6 +206,18 @@ def run_algorithm(run_dir: Path, algorithm_path: Path) -> int:
             logger=logger,
             run_context=run_context_data,
         )
+
+        runtime_fonts = configure_matplotlib_runtime_fonts()
+        if runtime_fonts:
+            logger.info(
+                "Configured matplotlib runtime CJK fonts: %s",
+                ", ".join(runtime_fonts),
+            )
+        else:
+            logger.info(
+                "No sandbox-aligned runtime CJK fonts were visible to matplotlib; "
+                "keeping existing matplotlib font settings"
+            )
 
         # Load and run algorithm
         logger.info(f"Loading algorithm from {algorithm_path}")

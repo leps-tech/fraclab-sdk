@@ -45,7 +45,7 @@ class RunOutputItem(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    itemKey: str | None = Field(default=None, alias="key")
+    itemKey: str | None = None
     owner: OwnerRef | None = None
     dims: dict[str, Any] = Field(default_factory=dict)
     meta: dict[str, Any] = Field(default_factory=dict)

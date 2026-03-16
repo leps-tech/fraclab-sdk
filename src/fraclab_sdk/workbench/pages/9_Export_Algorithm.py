@@ -19,12 +19,17 @@ from fraclab_sdk.devkit import (
 )
 from fraclab_sdk.snapshot import SnapshotLibrary
 from fraclab_sdk.workbench import ui_styles
+from fraclab_sdk.workbench.i18n import page_title, tx
 from fraclab_sdk.workbench.utils import format_snapshot_option
 
-st.set_page_config(page_title="Export Algorithm", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
-st.title("Export Algorithm")
-
-ui_styles.apply_global_styles()
+st.set_page_config(
+    page_title=page_title("export_algorithm"),
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+ui_styles.apply_global_styles("export_algorithm")
+ui_styles.render_page_header(tx("Export Algorithm", "算法打包导出"))
 
 # --- Page-Specific CSS ---
 st.markdown("""
@@ -49,28 +54,28 @@ snap_lib = SnapshotLibrary(config)
 
 algos = algo_lib.list_algorithms()
 if not algos:
-    st.info("No algorithms imported. Use Snapshots page to import or create one.")
+    st.info(tx("No algorithms imported. Use Snapshots page to import or create one.", "还没有已导入的算法。请先在“快照管理”页面导入或创建。"))
     st.stop()
 
 # ==========================================
 # 1. Source Selection
 # ==========================================
-st.subheader("1. Select Algorithm Source")
+st.subheader(tx("1. Select Algorithm Source", "1. 选择算法来源"))
 
 with st.container(border=True):
     c1, c2 = st.columns([3, 1])
     with c1:
         algo_options = {f"{a.algorithm_id}:{a.version}": a for a in algos}
         selected_key = st.selectbox(
-            "Target Algorithm",
+            tx("Target Algorithm", "目标算法"),
             options=list(algo_options.keys()),
             format_func=lambda k: f"{algo_options[k].algorithm_id} (v{algo_options[k].version})",
-            label_visibility="collapsed"
+            label_visibility="collapsed",
         )
     with c2:
         if selected_key:
             selected_algo = algo_options[selected_key]
-            st.caption(f"ID: `{selected_algo.algorithm_id}`")
+            st.caption(tx("ID: `{algorithm_id}`", "ID：`{algorithm_id}`", algorithm_id=selected_algo.algorithm_id))
 
 if not selected_key:
     st.stop()
@@ -89,7 +94,7 @@ drs_path = algo_dir / "dist" / "drs.json"
 # ==========================================
 # 2. Validation Status
 # ==========================================
-st.subheader("2. Validation Status")
+st.subheader(tx("2. Validation Status", "2. 校验状态"))
 
 
 def _get_algo_mtime(algo_dir: Path) -> float:
@@ -209,7 +214,7 @@ with st.container(border=True):
     names = ["InputSpec", "OutputContract", "Algorithm"]
     keys = ["inputspec", "output_contract", "algorithm"]
 
-    for i, (key, name) in enumerate(zip(keys, names)):
+    for i, (key, name) in enumerate(zip(keys, names, strict=True)):
         result = validation_results.get(key, {})
         error_count = result.get("errors", 0)
         warning_count = result.get("warnings", 0)
@@ -217,12 +222,12 @@ with st.container(border=True):
         with cols[i]:
             if error_count > 0:
                 st.markdown(
-                    f'<span class="status-badge status-missing">❌ {name}: {error_count} error{"s" if error_count > 1 else ""}</span>',
+                    f'<span class="status-badge status-missing">❌ {name}: {error_count} {tx("error", "错误")}{"s" if error_count > 1 and tx("error", "错误") == "error" else ""}</span>',
                     unsafe_allow_html=True,
                 )
             elif warning_count > 0:
                 st.markdown(
-                    f'<span class="status-badge status-warning">⚠️ {name}: {warning_count} warning{"s" if warning_count > 1 else ""}</span>',
+                    f'<span class="status-badge status-warning">⚠️ {name}: {warning_count} {tx("warning", "警告")}{"s" if warning_count > 1 and tx("warning", "警告") == "warning" else ""}</span>',
                     unsafe_allow_html=True,
                 )
             else:
@@ -232,7 +237,7 @@ with st.container(border=True):
                 )
 
     with cols[3]:
-        if st.button("🔄 Revalidate", key="rerun_validation"):
+        if st.button(tx("🔄 Revalidate", "🔄 重新校验"), key="rerun_validation"):
             _run_all_validations.clear()
             st.rerun()
 
@@ -245,7 +250,15 @@ for key in keys:
 
 # Show validation details if there are issues
 if all_issues:
-    with st.expander(f"📋 Validation Details ({len(all_issues)} issue{'s' if len(all_issues) > 1 else ''})", expanded=False):
+    with st.expander(
+        tx(
+            "📋 Validation Details ({count} issue{suffix})",
+            "📋 校验详情（{count} 项问题）",
+            count=len(all_issues),
+            suffix="s" if len(all_issues) > 1 else "",
+        ),
+        expanded=False,
+    ):
         for source, issue in all_issues:
             icon = {"error": "🔴", "warning": "🟡", "info": "🔵"}.get(issue["severity"], "⚪")
             path_str = f" at `{issue['path']}`" if issue.get("path") else ""
@@ -253,16 +266,28 @@ if all_issues:
             if issue.get("details"):
                 # Show suggested fix for snake_case issues
                 if "suggested" in issue["details"]:
-                    details_str = f" → Suggested: `{issue['details']['suggested']}`"
+                    details_str = tx(
+                        " → Suggested: `{value}`",
+                        " → 建议：`{value}`",
+                        value=issue["details"]["suggested"],
+                    )
                 elif "missing" in issue["details"]:
-                    details_str = f" (missing: {issue['details']['missing']})"
+                    details_str = tx(
+                        " (missing: {value})",
+                        "（缺失：{value}）",
+                        value=issue["details"]["missing"],
+                    )
                 elif "extra" in issue["details"]:
-                    details_str = f" (extra: {issue['details']['extra']})"
+                    details_str = tx(
+                        " (extra: {value})",
+                        "（多余：{value}）",
+                        value=issue["details"]["extra"],
+                    )
             st.markdown(f"{icon} **[{source}]** `{issue['code']}`{path_str}: {issue['message']}{details_str}")
 
 # File Inspector
-with st.expander("📂 File Inspector", expanded=True):
-    tab_man, tab_in, tab_out = st.tabs(["Manifest", "Input Spec", "Output Spec"])
+with st.expander(tx("📂 File Inspector", "📂 文件查看器"), expanded=True):
+    tab_man, tab_in, tab_out = st.tabs([tx("Manifest", "Manifest"), tx("Input Spec", "输入规范"), tx("Output Spec", "输出规范")])
     inspector_height = 320
 
     def _show_json_preview(path: Path):
@@ -276,9 +301,9 @@ with st.expander("📂 File Inspector", expanded=True):
                     height=inspector_height,
                 )
             except Exception:
-                st.error("Failed to parse JSON")
+                st.error(tx("Failed to parse JSON", "JSON 解析失败"))
         else:
-            st.info("File not generated yet.")
+            st.info(tx("File not generated yet.", "文件尚未生成。"))
 
     with tab_man: _show_json_preview(manifest_path)
     with tab_in: _show_json_preview(params_schema_path)
@@ -288,26 +313,28 @@ with st.expander("📂 File Inspector", expanded=True):
 # ==========================================
 # 3. DS/DRS Source Selection
 # ==========================================
-st.subheader("3. Select DS/DRS Source")
+st.subheader(tx("3. Select DS/DRS Source", "3. 选择 DS/DRS 来源"))
 
 snapshots = snap_lib.list_snapshots()
 snapshot_map = {s.snapshot_id: s for s in snapshots}
 
 if not snapshots:
-    st.warning("No snapshots available. Import a snapshot first to provide DS/DRS for export.")
+    st.warning(tx("No snapshots available. Import a snapshot first to provide DS/DRS for export.", "没有可用快照。请先导入快照，为导出提供 DS/DRS。"))
     st.stop()
 
 with st.container(border=True):
     st.caption(
-        "Select a snapshot to provide DS/DRS (dist/ds.json and dist/drs.json) "
-        "for the export package."
+        tx(
+            "Select a snapshot to provide DS/DRS (dist/ds.json and dist/drs.json) for the export package.",
+            "选择一个快照，为导出包提供 DS/DRS（dist/ds.json 和 dist/drs.json）。",
+        )
     )
 
     selected_snapshot_id = st.selectbox(
-        "Snapshot (DS/DRS Source)",
+        tx("Snapshot (DS/DRS Source)", "快照（DS/DRS 来源）"),
         options=list(snapshot_map.keys()),
         format_func=lambda x: format_snapshot_option(snapshot_map[x]),
-        label_visibility="collapsed"
+        label_visibility="collapsed",
     )
 
 if not selected_snapshot_id:
@@ -318,18 +345,18 @@ bundle_ds_path = snapshot_handle.directory / snapshot_handle.manifest.specFiles.
 bundle_drs_path = snapshot_handle.directory / snapshot_handle.manifest.specFiles.drsPath
 
 with st.container(border=True):
-    st.caption("Selected Bundle DS/DRS Preview")
-    tab_bundle_ds, tab_bundle_drs = st.tabs(["Bundle ds.json", "Bundle drs.json"])
+    st.caption(tx("Selected Bundle DS/DRS Preview", "所选 Bundle DS/DRS 预览"))
+    tab_bundle_ds, tab_bundle_drs = st.tabs([tx("Bundle ds.json", "Bundle ds.json"), tx("Bundle drs.json", "Bundle drs.json")])
     preview_height = 320
 
     def _show_bundle_spec(path: Path) -> None:
         if not path.exists():
-            st.error(f"File not found: {path.name}")
+            st.error(tx("File not found: {name}", "文件不存在：{name}", name=path.name))
             return
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
-            st.error(f"Failed to parse JSON: {e}")
+            st.error(tx("Failed to parse JSON: {error}", "JSON 解析失败：{error}", error=e))
             return
         st.code(
             json.dumps(data, indent=2, ensure_ascii=False),
@@ -347,7 +374,7 @@ with st.container(border=True):
 # 4. Export
 # ==========================================
 st.divider()
-st.subheader("4. Export")
+st.subheader(tx("4. Export", "4. 导出"))
 
 def build_zip() -> bytes:
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -428,19 +455,19 @@ has_validation_errors = any(not r.get("valid", True) for r in validation_results
 _, col_export_btn = st.columns([3, 1])
 with col_export_btn:
     if has_validation_errors:
-        st.error("Fix validation errors to export")
-        st.button("📦 Build & Export", type="primary", disabled=True, key="export_disabled")
+        st.error(tx("Fix validation errors to export", "请先修复校验错误，再导出"))
+        st.button(tx("📦 Build & Export", "📦 构建并导出"), type="primary", disabled=True, key="export_disabled")
     else:
-        if st.button("📦 Build & Export", type="primary", key="export_enabled"):
+        if st.button(tx("📦 Build & Export", "📦 构建并导出"), type="primary", key="export_enabled"):
             try:
-                with st.spinner("Packaging..."):
+                with st.spinner(tx("Packaging...", "正在打包...")):
                     zip_bytes = build_zip()
 
                 st.download_button(
-                    label="⬇️ Download Zip",
+                    label=tx("⬇️ Download Zip", "⬇️ 下载 Zip"),
                     data=zip_bytes,
                     file_name=f"{selected_algo.algorithm_id}-{selected_algo.version}.zip",
                     mime="application/zip",
                 )
             except Exception as e:
-                st.error(f"Export failed: {e}")
+                st.error(tx("Export failed: {error}", "导出失败：{error}", error=e))

@@ -321,7 +321,7 @@ def validate_inputspec_cmd(
 ):
     """Validate InputSpec (schema.inputspec:INPUT_SPEC).
 
-    Checks json_schema_extra fields, show_when conditions, and enum_labels.
+    Checks json_schema_extra fields, showWhen conditions, and enumLabels.
     """
     from fraclab_sdk.devkit.validate import ValidationSeverity, validate_inputspec
 

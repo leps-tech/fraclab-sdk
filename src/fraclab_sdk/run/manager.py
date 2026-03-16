@@ -18,8 +18,7 @@ from fraclab_sdk.run.logs import tail_stderr, tail_stdout
 from fraclab_sdk.run.subprocess_runner import SubprocessRunner
 from fraclab_sdk.selection.model import SelectionModel
 from fraclab_sdk.snapshot import SnapshotLibrary
-from fraclab_sdk.utils.io import atomic_write_json
-from fraclab_sdk.utils.io import atomic_write_json
+from fraclab_sdk.utils.json_index_store import JsonIndexStore
 
 
 class RunStatus(Enum):
@@ -59,92 +58,60 @@ class RunResult:
     stderr: str | None = None
 
 
+def _run_to_entry(meta: RunMeta) -> dict[str, Any]:
+    return {
+        "run_id": meta.run_id,
+        "snapshot_id": meta.snapshot_id,
+        "algorithm_id": meta.algorithm_id,
+        "algorithm_version": meta.algorithm_version,
+        "status": meta.status.value,
+        "created_at": meta.created_at,
+        "started_at": meta.started_at,
+        "completed_at": meta.completed_at,
+        "error": meta.error,
+    }
+
+
+def _run_from_entry(entry: dict[str, Any]) -> RunMeta:
+    return RunMeta(
+        run_id=entry["run_id"],
+        snapshot_id=entry["snapshot_id"],
+        algorithm_id=entry["algorithm_id"],
+        algorithm_version=entry["algorithm_version"],
+        status=RunStatus(entry.get("status", "")),
+        created_at=entry["created_at"],
+        started_at=entry.get("started_at"),
+        completed_at=entry.get("completed_at"),
+        error=entry.get("error"),
+    )
+
+
 class RunIndex:
     """Manages the run index file."""
 
     def __init__(self, runs_dir: Path) -> None:
-        """Initialize run index."""
-        self._runs_dir = runs_dir
-        self._index_path = runs_dir / "index.json"
-
-    def _load(self) -> dict[str, dict]:
-        """Load index from disk."""
-        if not self._index_path.exists():
-            return {}
-        return json.loads(self._index_path.read_text())
-
-    def _save(self, data: dict[str, dict]) -> None:
-        """Save index to disk."""
-        self._runs_dir.mkdir(parents=True, exist_ok=True)
-        atomic_write_json(self._index_path, data)
-
-    def add(self, meta: RunMeta) -> None:
-        """Add a run to the index."""
-        data = self._load()
-        data[meta.run_id] = {
-            "run_id": meta.run_id,
-            "snapshot_id": meta.snapshot_id,
-            "algorithm_id": meta.algorithm_id,
-            "algorithm_version": meta.algorithm_version,
-            "status": meta.status.value,
-            "created_at": meta.created_at,
-            "started_at": meta.started_at,
-            "completed_at": meta.completed_at,
-            "error": meta.error,
-        }
-        self._save(data)
-
-    def update(self, meta: RunMeta) -> None:
-        """Update a run in the index."""
-        self.add(meta)
-
-    def remove(self, run_id: str) -> None:
-        """Remove a run from the index."""
-        data = self._load()
-        if run_id in data:
-            del data[run_id]
-            self._save(data)
-
-    def get(self, run_id: str) -> RunMeta | None:
-        """Get run metadata."""
-        data = self._load()
-        if run_id not in data:
-            return None
-        entry = data[run_id]
-        return RunMeta(
-            run_id=entry["run_id"],
-            snapshot_id=entry["snapshot_id"],
-            algorithm_id=entry["algorithm_id"],
-            algorithm_version=entry["algorithm_version"],
-            status=self._coerce_status(entry.get("status", "")),
-            created_at=entry["created_at"],
-            started_at=entry.get("started_at"),
-            completed_at=entry.get("completed_at"),
-            error=entry.get("error"),
+        self._store: JsonIndexStore[RunMeta] = JsonIndexStore(
+            runs_dir,
+            make_key=lambda m: m.run_id,
+            to_entry=_run_to_entry,
+            from_entry=_run_from_entry,
         )
 
-    def list_all(self) -> list[RunMeta]:
-        """List all runs."""
-        data = self._load()
-        return [
-            RunMeta(
-                run_id=entry["run_id"],
-                snapshot_id=entry["snapshot_id"],
-                algorithm_id=entry["algorithm_id"],
-                algorithm_version=entry["algorithm_version"],
-                status=self._coerce_status(entry.get("status", "")),
-                created_at=entry["created_at"],
-                started_at=entry.get("started_at"),
-                completed_at=entry.get("completed_at"),
-                error=entry.get("error"),
-            )
-            for entry in data.values()
-        ]
+    def add(self, meta: RunMeta) -> None:
+        self._store.add(meta)
 
-    @staticmethod
-    def _coerce_status(value: str) -> RunStatus:
-        """Parse persisted run status as strict RunStatus enum."""
-        return RunStatus(value)
+    def update(self, meta: RunMeta) -> None:
+        """Update a run in the index (alias for add)."""
+        self._store.add(meta)
+
+    def remove(self, run_id: str) -> None:
+        self._store.remove(run_id)
+
+    def get(self, run_id: str) -> RunMeta | None:
+        return self._store.get(run_id)
+
+    def list_all(self) -> list[RunMeta]:
+        return self._store.list_all()
 
 
 class RunManager:

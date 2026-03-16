@@ -5,6 +5,7 @@ from pathlib import Path
 
 from fraclab_sdk.errors import SnapshotError
 from fraclab_sdk.models import DRS, BundleManifest, DataSpec, DataSpecItem
+from fraclab_sdk.utils.path_safety import is_safe_relative_path
 
 
 class SnapshotHandle:
@@ -36,51 +37,71 @@ class SnapshotHandle:
             self._manifest = BundleManifest.model_validate_json(manifest_path.read_text())
         return self._manifest
 
+    def _resolve_manifest_relative_path(self, rel_path: str, field_name: str) -> Path:
+        """Resolve a manifest-declared relative path under the snapshot directory."""
+        if not is_safe_relative_path(rel_path):
+            raise SnapshotError(f"Unsafe manifest path {field_name}: {rel_path}")
+        return self._dir / rel_path
+
     @property
     def dataspec(self) -> DataSpec:
         """Get data specification."""
         if self._dataspec is None:
-            ds_path = self._dir / self.manifest.specFiles.dsPath
+            ds_path = self._resolve_manifest_relative_path(
+                self.manifest.specFiles.dsPath,
+                "specFiles.dsPath",
+            )
             if not ds_path.exists():
                 raise SnapshotError(f"DataSpec not found: {ds_path}")
-            self._dataspec = DataSpec.model_validate_json(ds_path.read_text())
+            self._dataspec = DataSpec.model_validate_json(ds_path.read_text(encoding="utf-8"))
         return self._dataspec
 
     @property
     def drs(self) -> DRS:
         """Get data requirement specification."""
         if self._drs is None:
-            drs_path = self._dir / self.manifest.specFiles.drsPath
+            drs_path = self._resolve_manifest_relative_path(
+                self.manifest.specFiles.drsPath,
+                "specFiles.drsPath",
+            )
             if not drs_path.exists():
                 raise SnapshotError(f"DRS not found: {drs_path}")
-            self._drs = DRS.model_validate_json(drs_path.read_text())
+            self._drs = DRS.model_validate_json(drs_path.read_text(encoding="utf-8"))
         return self._drs
 
     @property
     def data_root(self) -> Path:
         """Get data root directory path."""
-        return self._dir / self.manifest.dataRoot
+        return self._resolve_manifest_relative_path(self.manifest.dataRoot, "dataRoot")
 
     def get_raw_ds_bytes(self) -> bytes:
         """Get raw bytes of ds.json for hash verification."""
-        return (self._dir / self.manifest.specFiles.dsPath).read_bytes()
+        ds_path = self._resolve_manifest_relative_path(
+            self.manifest.specFiles.dsPath,
+            "specFiles.dsPath",
+        )
+        return ds_path.read_bytes()
 
     def get_raw_drs_bytes(self) -> bytes:
         """Get raw bytes of drs.json for hash verification."""
-        return (self._dir / self.manifest.specFiles.drsPath).read_bytes()
+        drs_path = self._resolve_manifest_relative_path(
+            self.manifest.specFiles.drsPath,
+            "specFiles.drsPath",
+        )
+        return drs_path.read_bytes()
 
     def get_datasets(self) -> list[dict]:
         """Get list of datasets with metadata.
 
         Returns:
-            List of dicts with dataset_key, resource_type, layout, item_count.
+            List of dicts with datasetKey, resourceType, layout, itemCount.
         """
         return [
             {
-                "dataset_key": ds.datasetKey,
-                "resource_type": ds.resourceType,
+                "datasetKey": ds.datasetKey,
+                "resourceType": ds.resourceType,
                 "layout": ds.layout,
-                "item_count": len(ds.items),
+                "itemCount": len(ds.items),
             }
             for ds in self.dataspec.datasets
         ]

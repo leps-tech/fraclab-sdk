@@ -1,15 +1,14 @@
 """Algorithm compilation: generate static artifacts from workspace.
 
 Compile workflow:
-1. Import schema.inputspec:INPUT_SPEC → model_json_schema() → dist/params.schema.json
-2. Import schema.output_contract:OUTPUT_CONTRACT → model_dump() → dist/output_contract.json
+1. Import schema.inputspec:INPUT_SPEC → model_json_schema(by_alias=True) → dist/params.schema.json
+2. Import schema.output_contract:OUTPUT_CONTRACT → model_dump(by_alias=True) → dist/output_contract.json
 3. Copy ds.json and drs.json from bundle → dist/ds.json + dist/drs.json
 4. Update manifest.json with files pointers
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import shutil
 import subprocess
@@ -20,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from fraclab_sdk.errors import AlgorithmError
+from fraclab_sdk.materialize.hash import compute_file_sha256
+from fraclab_sdk.models import DRS, DataSpec
 
 
 @dataclass
@@ -136,7 +137,7 @@ import sys
 try:
     from schema.inputspec import INPUT_SPEC
     model = INPUT_SPEC
-    schema = model.model_json_schema()
+    schema = model.model_json_schema(by_alias=True)
     print(json.dumps(schema))
 except ImportError as e:
     print(json.dumps({"error": f"Failed to import INPUT_SPEC: {e}"}))
@@ -170,7 +171,7 @@ try:
     from schema.output_contract import OUTPUT_CONTRACT
     # Use model_dump with mode="json" for JSON-serializable output
     if hasattr(OUTPUT_CONTRACT, 'model_dump'):
-        data = OUTPUT_CONTRACT.model_dump(mode="json")
+        data = OUTPUT_CONTRACT.model_dump(mode="json", by_alias=True)
     else:
         data = OUTPUT_CONTRACT.dict()
     print(json.dumps(data))
@@ -187,19 +188,6 @@ except Exception as e:
         raise AlgorithmError(result["error"])
     return result
 
-
-def _compute_file_hash(path: Path) -> str:
-    """Compute SHA256 hash of file contents (raw bytes).
-
-    Args:
-        path: File path.
-
-    Returns:
-        Hex-encoded SHA256 hash.
-    """
-    hasher = hashlib.sha256()
-    hasher.update(path.read_bytes())
-    return hasher.hexdigest()
 
 
 def compile_algorithm(
@@ -309,8 +297,8 @@ def compile_algorithm(
                 manifest = json.loads(bundle_manifest.read_text())
                 spec_files = manifest.get("specFiles", {})
                 bound_bundle = {
-                    "dsSha256": spec_files.get("dsSha256") or _compute_file_hash(bundle_ds),
-                    "drsSha256": spec_files.get("drsSha256") or _compute_file_hash(bundle_drs),
+                    "dsSha256": spec_files.get("dsSha256") or compute_file_sha256(bundle_ds),
+                    "drsSha256": spec_files.get("drsSha256") or compute_file_sha256(bundle_drs),
                 }
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -318,6 +306,12 @@ def compile_algorithm(
         raise AlgorithmError(
             "dist/ds.json or dist/drs.json not found. Provide --bundle to copy from bundle."
         )
+
+    try:
+        DataSpec.model_validate_json(ds_path.read_text(encoding="utf-8"))
+        DRS.model_validate_json(drs_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        raise AlgorithmError(f"dist/ds.json or dist/drs.json is not valid camelCase SDK spec: {e}") from e
 
     # 4. Update manifest.json with files pointers
     manifest = json.loads(manifest_path.read_text())

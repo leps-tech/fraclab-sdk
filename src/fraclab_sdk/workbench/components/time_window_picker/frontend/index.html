@@ -130,35 +130,39 @@
   </head>
   <body>
     <div class="root">
-      <div class="row">
-        <span class="label">Dataset</span>
-        <select id="datasetSelect"></select>
-      </div>
-
-      <div class="row">
-        <span class="label">Items Scope</span>
-        <div id="scopePicker" class="scope-inline"></div>
-        <span id="scopeHint" class="hint"></span>
-      </div>
-
-      <div id="itemTabs" class="tabs"></div>
-      <div class="row">
-        <span id="windowSlotHint" class="slot-hint"></span>
-      </div>
-      <div id="plot"></div>
-      <div class="row">
-        <button id="clearPendingBtn" type="button">Clear Pending</button>
-        <span id="clickHint" class="hint"></span>
-      </div>
-      <div id="windows"></div>
-      <div class="row">
-        <span id="constraintHint" class="hint"></span>
-      </div>
-      <div class="global-summary">
-        <div class="global-summary-title">
-          Selected Windows · Run <span id="runIdLabel">unknown</span>
+      <div id="emptyState" class="hint" style="display: none"></div>
+      <div id="mainContent">
+        <div class="row">
+          <span id="datasetLabel" class="label">Dataset</span>
+          <select id="datasetSelect"></select>
         </div>
-        <div id="globalWindows"></div>
+
+        <div class="row">
+          <span id="scopeLabel" class="label">Items Scope</span>
+          <div id="scopePicker" class="scope-inline"></div>
+          <span id="scopeHint" class="hint"></span>
+        </div>
+
+        <div id="itemTabs" class="tabs"></div>
+        <div class="row">
+          <span id="windowSlotHint" class="slot-hint"></span>
+        </div>
+        <div id="plot"></div>
+        <div class="row">
+          <button id="clearPendingBtn" type="button">Clear Pending</button>
+          <span id="clickHint" class="hint"></span>
+        </div>
+        <div id="windows"></div>
+        <div class="row">
+          <span id="constraintHint" class="hint"></span>
+        </div>
+        <div class="global-summary">
+          <div class="global-summary-title">
+            <span id="summaryTitleText">Selected Windows · Run</span>
+            <span id="runIdLabel">unknown</span>
+          </div>
+          <div id="globalWindows"></div>
+        </div>
       </div>
     </div>
 
@@ -207,7 +211,11 @@
         };
       })();
       const root = document.querySelector(".root");
+      const emptyStateEl = document.getElementById("emptyState");
+      const mainContentEl = document.getElementById("mainContent");
+      const datasetLabelEl = document.getElementById("datasetLabel");
       const datasetSelect = document.getElementById("datasetSelect");
+      const scopeLabelEl = document.getElementById("scopeLabel");
       const itemTabs = document.getElementById("itemTabs");
       const scopePicker = document.getElementById("scopePicker");
       const windowsEl = document.getElementById("windows");
@@ -217,6 +225,7 @@
       const scopeHint = document.getElementById("scopeHint");
       const constraintHint = document.getElementById("constraintHint");
       const plotEl = document.getElementById("plot");
+      const summaryTitleTextEl = document.getElementById("summaryTitleText");
       const runIdLabelEl = document.getElementById("runIdLabel");
       const globalWindowsEl = document.getElementById("globalWindows");
 
@@ -228,6 +237,8 @@
         pendingByDataset: {},
         maxWindows: 64,
         runId: "unknown",
+        language: "en",
+        i18n: {},
       };
       let lastRenderSig = "";
       let legendState = {};
@@ -238,6 +249,22 @@
 
       function clamp(v, a, b) {
         return Math.min(b, Math.max(a, v));
+      }
+
+      function t(key, fallback, params = {}) {
+        const template = (state.i18n && state.i18n[key]) || fallback;
+        return String(template).replace(/\{(\w+)\}/g, (_, name) => {
+          const value = params[name];
+          return value === undefined || value === null ? "" : String(value);
+        });
+      }
+
+      function renderStaticText() {
+        document.documentElement.lang = state.language || "en";
+        if (datasetLabelEl) datasetLabelEl.textContent = t("dataset_label", "Dataset");
+        if (scopeLabelEl) scopeLabelEl.textContent = t("items_scope_label", "Items Scope");
+        if (clearPendingBtn) clearPendingBtn.textContent = t("clear_pending_button", "Clear Pending");
+        if (summaryTitleTextEl) summaryTitleTextEl.textContent = t("selected_windows_title", "Selected Windows · Run");
       }
 
       function syncFrameHeightNow() {
@@ -509,15 +536,27 @@
 
         const count = dsState.itemsWithWindows.length;
         if (scopeCfg.policy === "all") {
-          scopeHint.textContent = `Required by schema: all ${all.length} item(s) must be selected.`;
+          scopeHint.textContent = t(
+            "scope_required_all",
+            "Required by schema: all {count} item(s) must be selected.",
+            { count: all.length }
+          );
           scopeHint.style.color = "#6b7280";
         } else if (scopeCfg.exact !== null) {
           const ok = count === scopeCfg.exact;
-          scopeHint.textContent = `Required by schema: exactly ${scopeCfg.exact} item(s). Current: ${count}.`;
+          scopeHint.textContent = t(
+            "scope_required_exact",
+            "Required by schema: exactly {exact} item(s). Current: {count}.",
+            { exact: scopeCfg.exact, count }
+          );
           scopeHint.style.color = ok ? "#6b7280" : "#b91c1c";
         } else {
           const ok = count >= scopeCfg.min && count <= scopeCfg.max;
-          scopeHint.textContent = `Required by schema: min ${scopeCfg.min}, max ${scopeCfg.max}. Current: ${count}.`;
+          scopeHint.textContent = t(
+            "scope_required_min_max",
+            "Required by schema: min {min}, max {max}. Current: {count}.",
+            { min: scopeCfg.min, max: scopeCfg.max, count }
+          );
           scopeHint.style.color = ok ? "#6b7280" : "#b91c1c";
         }
 
@@ -631,10 +670,10 @@
           showlegend: true,
           dragmode: "zoom",
           xaxis: {
-            title: isDt ? "Time (UTC)" : "X",
+            title: isDt ? t("time_axis_label", "Time (UTC)") : t("x_axis_label", "X"),
             range: isDt ? [epochToPlotDate(xr0), epochToPlotDate(xr1)] : [xr0, xr1],
           },
-          yaxis: { title: "Value", autorange: true },
+          yaxis: { title: t("value_axis_label", "Value"), autorange: true },
           shapes: plotShapes(ds, itemKey),
         };
 
@@ -742,15 +781,22 @@
         const windows = windowsFor(ds, itemKey);
         const pending = pendingFor(ds, itemKey);
         clickHint.textContent = Number.isFinite(pending)
-          ? `Pending start: ${isDt ? toDateLabel(pending, dtDigits) : pending.toFixed(6)}. Click again to set end.`
-          : "Click chart to set start, then click again to set end.";
+          ? t(
+              "pending_start_hint",
+              "Pending start: {start}. Click again to set end.",
+              { start: isDt ? toDateLabel(pending, dtDigits) : pending.toFixed(6) }
+            )
+          : t("click_to_set_hint", "Click chart to set start, then click again to set end.");
         const dsCfg = getDatasetConfig(ds);
         const slots = Array.isArray(dsCfg.window_slots) ? dsCfg.window_slots : [];
         const fallbackNote = String(dsCfg.window_slot_fallback_note || "").trim();
         if (slots.length > 0) {
           const nextIdx = windows.length;
           if (nextIdx < slots.length && slots[nextIdx] && typeof slots[nextIdx] === "object") {
-            const title = String(slots[nextIdx].title || `Window ${nextIdx + 1}`);
+            const title = String(
+              slots[nextIdx].title ||
+                t("window_default_title", "Window {index}", { index: nextIdx + 1 })
+            );
             const note = String(slots[nextIdx].note || "").trim();
             windowSlotHint.textContent = note ? `${title}: ${note}` : title;
           } else {
@@ -772,22 +818,56 @@
         const count = windows.length;
         let invalidMsg = "";
         if (wc.exact !== null && count !== wc.exact) {
-          invalidMsg = `Current: ${count}, requires exactly ${wc.exact}.`;
+          invalidMsg = t(
+            "constraint_current_exact",
+            "Current: {count}, requires exactly {exact}.",
+            { count, exact: wc.exact }
+          );
         } else if (wc.min !== null && count < wc.min) {
-          invalidMsg = `Current: ${count}, requires at least ${wc.min}.`;
+          invalidMsg = t(
+            "constraint_current_min",
+            "Current: {count}, requires at least {min}.",
+            { count, min: wc.min }
+          );
         } else if (count > wc.max) {
-          invalidMsg = `Current: ${count}, maximum is ${wc.max}.`;
+          invalidMsg = t(
+            "constraint_current_max",
+            "Current: {count}, maximum is {max}.",
+            { count, max: wc.max }
+          );
         }
         if (wc.exact !== null) {
-          constraintHint.textContent = `Constraint: exactly ${wc.exact} window(s)${invalidMsg ? ` | ${invalidMsg}` : ""}`;
+          constraintHint.textContent = t(
+            "constraint_exact",
+            "Constraint: exactly {exact} window(s){invalid_suffix}",
+            {
+              exact: wc.exact,
+              invalid_suffix: invalidMsg ? ` | ${invalidMsg}` : "",
+            }
+          );
         } else {
-          constraintHint.textContent = `Constraint: ${wc.min !== null ? `min ${wc.min}, ` : ""}max ${wc.max} window(s)${invalidMsg ? ` | ${invalidMsg}` : ""}`;
+          const bounds =
+            wc.min !== null
+              ? t(
+                  "constraint_bounds_min_max",
+                  "min {min}, max {max}",
+                  { min: wc.min, max: wc.max }
+                )
+              : t("constraint_bounds_max_only", "max {max}", { max: wc.max });
+          constraintHint.textContent = t(
+            "constraint_min_max",
+            "Constraint: {bounds} window(s){invalid_suffix}",
+            {
+              bounds,
+              invalid_suffix: invalidMsg ? ` | ${invalidMsg}` : "",
+            }
+          );
         }
         constraintHint.style.color = invalidMsg ? "#b91c1c" : "#6b7280";
       }
 
       function renderGlobalWindowsSummary() {
-        if (runIdLabelEl) runIdLabelEl.textContent = state.runId || "unknown";
+        if (runIdLabelEl) runIdLabelEl.textContent = state.runId || t("run_id_unknown", "unknown");
         globalWindowsEl.innerHTML = "";
         const rows = [];
         for (const datasetKey of Object.keys(state.valueByDataset || {})) {
@@ -810,7 +890,7 @@
         if (!rows.length) {
           const empty = document.createElement("div");
           empty.className = "hint";
-          empty.textContent = "No windows selected yet.";
+          empty.textContent = t("no_windows_selected", "No windows selected yet.");
           globalWindowsEl.appendChild(empty);
           return;
         }
@@ -833,11 +913,15 @@
             text.className = "hint";
             const start = row.isDatetime ? toDateLabel(w.min, row.dtDigits) : Number(w.min).toFixed(6);
             const end = row.isDatetime ? toDateLabel(w.max, row.dtDigits) : Number(w.max).toFixed(6);
-            text.textContent = `Window ${i + 1}: ${start} -> ${end}`;
+            text.textContent = t(
+              "summary_window_line",
+              "Window {index}: {start} -> {end}",
+              { index: i + 1, start, end }
+            );
 
             const delBtn = document.createElement("button");
             delBtn.type = "button";
-            delBtn.textContent = "Delete";
+            delBtn.textContent = t("delete_button", "Delete");
             delBtn.onclick = () => {
               const dsState = state.valueByDataset[row.datasetKey];
               if (!dsState || !dsState.items || !Array.isArray(dsState.items[row.itemKey])) return;
@@ -863,11 +947,18 @@
       }
 
       async function renderAll() {
+        renderStaticText();
         if (!state.activeDataset) {
-          root.innerHTML = "<div class='hint'>No datasets available.</div>";
+          if (emptyStateEl) {
+            emptyStateEl.style.display = "block";
+            emptyStateEl.textContent = t("no_datasets_available", "No datasets available.");
+          }
+          if (mainContentEl) mainContentEl.style.display = "none";
           syncFrameHeightSoon();
           return;
         }
+        if (emptyStateEl) emptyStateEl.style.display = "none";
+        if (mainContentEl) mainContentEl.style.display = "block";
         renderDatasetSelector();
         const ds = state.activeDataset;
         renderScopePicker();
@@ -884,12 +975,16 @@
         const args = event.detail.args || {};
         const datasetsConfig = args.datasets_config || {};
         const currentValue = args.current_value;
-        const sig = JSON.stringify([datasetsConfig, currentValue]);
+        const language = String(args.language || "en");
+        const i18n = args.i18n && typeof args.i18n === "object" ? args.i18n : {};
+        const sig = JSON.stringify([datasetsConfig, currentValue, language, i18n]);
         if (sig !== lastRenderSig) {
           state.datasetsConfig = datasetsConfig;
           state.height = Number(args.height) || 500;
           state.maxWindows = 64;
-          state.runId = String(args.run_id || "unknown");
+          state.runId = String(args.run_id || i18n.run_id_unknown || "unknown");
+          state.language = language;
+          state.i18n = i18n;
 
           const existing = normalizeInputValue(currentValue);
           const keys = Object.keys(datasetsConfig);

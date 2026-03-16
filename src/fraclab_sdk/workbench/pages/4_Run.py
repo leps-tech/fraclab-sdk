@@ -1,29 +1,39 @@
 """Run page: edit params for existing runs and execute."""
 
 import json
-from pathlib import Path
-from typing import Any, Dict
+from contextlib import suppress
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
+from typing import Any
 
-import pandas as pd
 import streamlit as st
 
 from fraclab_sdk.algorithm import AlgorithmLibrary
 from fraclab_sdk.config import SDKConfig
 from fraclab_sdk.models import DataSpec
 from fraclab_sdk.run import RunManager, RunStatus
-from fraclab_sdk.workbench.components.time_window_picker import time_window_picker
 from fraclab_sdk.workbench import ui_styles
+from fraclab_sdk.workbench.components.time_window_picker import time_window_picker
+from fraclab_sdk.workbench.i18n import page_title, run_status_label, tx
+from fraclab_sdk.workbench.parquet_preview import build_parquet_preview_from_files
 
-st.set_page_config(page_title="Run", page_icon="▶️", layout="wide", initial_sidebar_state="expanded")
-st.title("Run")
-
-ui_styles.apply_global_styles()
+st.set_page_config(
+    page_title=page_title("run"),
+    page_icon="▶️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+ui_styles.apply_global_styles("run")
+ui_styles.render_page_header(tx("Run", "运行管理"))
 
 # Guidance: if no params UI shows up, validate InputSpec via the editor page.
 st.info(
-    "看不到参数输入框？请在 Schema Editor 页面点击 Validate 检查 "
-    "`schema/inputspec.py`，确保生成的 schema 可用。",
+    tx(
+        "Missing parameter inputs? Use Validate on the Schema Editor page to check "
+        "`schema/inputspec.py` and ensure the generated schema is usable.",
+        "看不到参数输入框？请在输入参数编辑页面点击 Validate 检查 "
+        "`schema/inputspec.py`，确保生成的 schema 可用。",
+    ),
     icon="ℹ️",
 )
 # --- Page-Specific CSS ---
@@ -73,9 +83,7 @@ def _is_compact_field(schema: dict) -> bool:
     # Numbers, Booleans, and short Strings (without enums/long defaults) are compact
     if ftype in ["integer", "number", "boolean"]:
         return True
-    if ftype == "string" and len(str(schema.get("default", ""))) < 50:
-        return True
-    return False
+    return ftype == "string" and len(str(schema.get("default", ""))) < 50
 
 
 def _resolve_number_step_and_format(schema: dict) -> tuple[float, str]:
@@ -103,12 +111,12 @@ def _resolve_number_step_and_format(schema: dict) -> tuple[float, str]:
 
 
 def _extract_ui_type(schema: dict[str, Any]) -> str | None:
-    """Extract ui_type from schema field metadata."""
-    if isinstance(schema.get("ui_type"), str):
-        return schema.get("ui_type")
+    """Extract uiType from schema field metadata."""
+    if isinstance(schema.get("uiType"), str):
+        return schema.get("uiType")
     extra = schema.get("json_schema_extra")
-    if isinstance(extra, dict) and isinstance(extra.get("ui_type"), str):
-        return extra.get("ui_type")
+    if isinstance(extra, dict) and isinstance(extra.get("uiType"), str):
+        return extra.get("uiType")
     return None
 
 
@@ -176,79 +184,6 @@ def _owner_stage_id(item_owner: Any, fallback: str) -> str:
     return fallback
 
 
-def _pick_xy_columns(df: pd.DataFrame) -> tuple[str | None, list[str], str]:
-    """Pick x column and all numeric y columns, preferring datetime x-axis."""
-    if df.empty:
-        return None, [], "numeric"
-    x_time_candidates = ["timestamp", "bucket", "ts", "time", "datetime", "dateTime", "date", "t"]
-    x_numeric_candidates = ["sec", "seconds", "x"]
-    y_candidates = ["treatingPressure", "pressure", "value", "y", "slurryRate", "proppantConc"]
-    col_map = {str(c).lower(): c for c in df.columns}
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-
-    for c in x_time_candidates:
-        actual = col_map.get(c.lower())
-        if actual is not None:
-            parsed = pd.to_datetime(df[actual], errors="coerce", utc=True)
-            if parsed.notna().any():
-                x_col = actual
-                break
-    else:
-        x_col = None
-
-    x_mode = "datetime"
-    if x_col is None:
-        x_mode = "numeric"
-        x_col = next((col_map.get(c.lower()) for c in x_numeric_candidates if col_map.get(c.lower()) in numeric_cols), None)
-        if x_col is None and numeric_cols:
-            x_col = numeric_cols[0]
-
-    y_priority = [col_map[c.lower()] for c in y_candidates if col_map.get(c.lower()) in numeric_cols and col_map[c.lower()] != x_col]
-    y_remaining = [c for c in numeric_cols if c != x_col and c not in y_priority]
-    y_cols = y_priority + y_remaining
-    return x_col, y_cols, x_mode
-
-
-def _parse_timestamp_series(series: pd.Series) -> pd.Series:
-    """Parse timestamp column with numeric-unit inference."""
-    if pd.api.types.is_numeric_dtype(series):
-        numeric = pd.to_numeric(series, errors="coerce")
-        finite = numeric.dropna()
-        if finite.empty:
-            return pd.to_datetime(series, errors="coerce", utc=True)
-        # Try multiple units and choose the most plausible calendar range.
-        candidates: list[tuple[int, float, pd.Series]] = []
-        now_year = pd.Timestamp.utcnow().year
-        for unit in ("ns", "us", "ms", "s"):
-            dt = pd.to_datetime(numeric, errors="coerce", utc=True, unit=unit)
-            valid = dt.dropna()
-            if valid.empty:
-                continue
-            years = valid.dt.year
-            in_range = int(((years >= 2000) & (years <= 2100)).sum())
-            median_year = float(years.median())
-            year_distance = abs(median_year - now_year)
-            # prioritize in-range count, then closeness to current year
-            score = in_range * 1000 - year_distance
-            candidates.append((len(valid), score, dt))
-        if candidates:
-            candidates.sort(key=lambda x: (x[1], x[0]), reverse=True)
-            return candidates[0][2]
-        return pd.to_datetime(numeric, errors="coerce", utc=True)
-    return pd.to_datetime(series, errors="coerce", utc=True)
-
-
-def _datetime_series_to_epoch_seconds(series: pd.Series) -> list[float]:
-    """Convert datetime-like series to epoch seconds with fixed ns precision."""
-    dt = pd.to_datetime(series, errors="coerce", utc=True)
-    dt = dt.dropna()
-    if dt.empty:
-        return []
-    # Force ns precision before integer conversion to avoid ms/us unit drift.
-    dt_ns = dt.dt.tz_convert("UTC").dt.tz_localize(None).astype("datetime64[ns]").astype("int64")
-    return (dt_ns / 1e9).astype(float).tolist()
-
-
 def _coerce_ranges(value: Any) -> list[dict[str, Any]]:
     """Coerce list of windows: {min,max} with optional itemKey."""
     out: list[dict[str, Any]] = []
@@ -305,155 +240,6 @@ def _flatten_item_window_map(
     return output
 
 
-def _downsample_trace(
-    x_vals: list[Any],
-    y_vals: list[float],
-    max_points: int = 1500,
-) -> tuple[list[Any], list[float]]:
-    """Downsample trace for display performance while keeping endpoints."""
-    n = min(len(x_vals), len(y_vals))
-    if n <= max_points:
-        return x_vals[:n], y_vals[:n]
-    step = max(1, n // max_points)
-    xs = x_vals[::step]
-    ys = y_vals[::step]
-    if xs and x_vals[n - 1] != xs[-1]:
-        xs.append(x_vals[n - 1])
-        ys.append(y_vals[n - 1])
-    return xs, ys
-
-
-def _infer_min_positive_step(values: list[float]) -> float | None:
-    """Infer minimum positive step from x-values."""
-    if len(values) < 2:
-        return None
-    uniq = sorted(set(float(v) for v in values))
-    if len(uniq) < 2:
-        return None
-    min_diff: float | None = None
-    prev = uniq[0]
-    for cur in uniq[1:]:
-        diff = cur - prev
-        prev = cur
-        if diff <= 0:
-            continue
-        if min_diff is None or diff < min_diff:
-            min_diff = diff
-    return min_diff
-
-
-def _merge_parquet_parts_for_preview(
-    parquet_files: list[Path],
-    *,
-    max_points: int = 600,
-) -> tuple[list[dict[str, Any]], list[float], float, bool]:
-    """Merge all parquet parts for one item and build downsampled preview traces.
-
-    Returns:
-        traces, x_range, x_step, x_is_datetime
-    """
-    if not parquet_files:
-        return [], [0.0, 1000.0], 1.0, False
-
-    # Probe schema from first readable part.
-    probe_df: pd.DataFrame | None = None
-    for pf in parquet_files:
-        try:
-            probe_df = pd.read_parquet(pf)
-            break
-        except Exception:
-            continue
-    if probe_df is None or probe_df.empty:
-        return [], [0.0, 1000.0], 1.0, False
-
-    x_col, y_cols, x_mode = _pick_xy_columns(probe_df)
-    if not x_col or not y_cols:
-        return [], [0.0, 1000.0], 1.0, False
-
-    needed_cols = [x_col, *y_cols]
-    per_file_budget = max(4, min(96, (max_points * 4) // max(1, len(parquet_files))))
-    x_is_datetime = x_mode == "datetime"
-
-    buckets: dict[str, dict[str, list[float]]] = {name: {"x": [], "y": []} for name in y_cols}
-    global_x_min: float | None = None
-    global_x_max: float | None = None
-    global_x_step: float | None = None
-
-    for pf in parquet_files:
-        try:
-            df = pd.read_parquet(pf, columns=needed_cols)
-        except Exception:
-            continue
-        if df.empty or x_col not in df.columns:
-            continue
-
-        if x_is_datetime:
-            x_dt = _parse_timestamp_series(df[x_col])
-            base_mask = x_dt.notna()
-            if not base_mask.any():
-                continue
-            x_valid = _datetime_series_to_epoch_seconds(x_dt[base_mask])
-        else:
-            x_num = pd.to_numeric(df[x_col], errors="coerce")
-            base_mask = x_num.notna()
-            if not base_mask.any():
-                continue
-            x_valid = x_num[base_mask].astype(float).tolist()
-
-        if x_valid:
-            local_min = float(min(x_valid))
-            local_max = float(max(x_valid))
-            global_x_min = local_min if global_x_min is None else min(global_x_min, local_min)
-            global_x_max = local_max if global_x_max is None else max(global_x_max, local_max)
-            local_step = _infer_min_positive_step(x_valid[:2000])
-            if local_step is not None and local_step > 0:
-                global_x_step = local_step if global_x_step is None else min(global_x_step, local_step)
-
-        for y_col in y_cols:
-            if y_col not in df.columns:
-                continue
-            y_series = pd.to_numeric(df[y_col], errors="coerce")
-            mask = base_mask & y_series.notna()
-            if not mask.any():
-                continue
-
-            if x_is_datetime:
-                x_vals = _datetime_series_to_epoch_seconds(x_dt[mask])
-            else:
-                x_vals = pd.to_numeric(df.loc[mask, x_col], errors="coerce").astype(float).tolist()
-            y_vals = y_series[mask].astype(float).tolist()
-            if not x_vals or len(x_vals) != len(y_vals):
-                continue
-
-            x_ds, y_ds = _downsample_trace(x_vals, y_vals, max_points=per_file_budget)
-            buckets[y_col]["x"].extend(float(v) for v in x_ds)
-            buckets[y_col]["y"].extend(float(v) for v in y_ds)
-
-    traces: list[dict[str, Any]] = []
-    for y_col in y_cols:
-        xs = buckets[y_col]["x"]
-        ys = buckets[y_col]["y"]
-        if not xs or len(xs) != len(ys):
-            continue
-
-        # Keep monotonic x for plotting, then globally downsample.
-        pairs = sorted(zip(xs, ys), key=lambda it: it[0])
-        xs_sorted = [float(p[0]) for p in pairs]
-        ys_sorted = [float(p[1]) for p in pairs]
-        xs_final, ys_final = _downsample_trace(xs_sorted, ys_sorted, max_points=max_points)
-        traces.append({"name": y_col, "x": xs_final, "y": ys_final})
-
-    if not traces:
-        return [], [0.0, 1000.0], (1.0 if x_is_datetime else 1e-6), x_is_datetime
-
-    if global_x_min is None or global_x_max is None:
-        x_all = traces[0]["x"]
-        global_x_min = float(min(x_all)) if x_all else 0.0
-        global_x_max = float(max(x_all)) if x_all else 1000.0
-    x_step = global_x_step if global_x_step is not None else (1.0 if x_is_datetime else 1e-6)
-    return traces, [global_x_min, global_x_max], float(x_step), x_is_datetime
-
-
 def _build_item_label(item: dict[str, Any]) -> str:
     """Build compact item label for selectors."""
     item_key = str(item.get("itemKey", ""))
@@ -486,16 +272,6 @@ def _extract_window_bounds(schema: dict[str, Any], root_schema: dict[str, Any], 
     max_items = normalized.get("maxItems")
     return (min_items if isinstance(min_items, int) else None, max_items if isinstance(max_items, int) else None)
 
-
-def _extract_items_scope_bounds_from_schema(
-    schema: dict[str, Any],
-    root_schema: dict[str, Any],
-    mode: str,
-) -> dict[str, Any]:
-    """Extract item scope policy/count constraints from schema."""
-    _ = (schema, root_schema, mode)
-    # New simplified schema: apply template windows to all selected items.
-    return {"policy": "all", "exact": None, "min": None, "max": None}
 
 
 def _as_dataset_value_for_component(
@@ -654,7 +430,7 @@ def _build_datasets_config(
     min_windows, max_windows = _extract_window_bounds(schema, root_schema, mode)
     if max_windows is None:
         max_windows = 64
-    item_scope = _extract_items_scope_bounds_from_schema(schema, root_schema, mode)
+    item_scope = {"policy": "all", "exact": None, "min": None, "max": None}
 
     config: dict[str, Any] = {}
     for dataset in ds.datasets:
@@ -675,13 +451,11 @@ def _build_datasets_config(
             if item_dir.exists():
                 parquet_files = sorted(item_dir.rglob("*.parquet"))
                 if parquet_files:
-                    try:
-                        traces, x_range, x_step, x_is_datetime = _merge_parquet_parts_for_preview(
+                    with suppress(Exception):
+                        traces, x_range, x_step, x_is_datetime = build_parquet_preview_from_files(
                             parquet_files,
                             max_points=600,
                         )
-                    except Exception:
-                        pass
 
             items_cfg[item_key] = {
                 "stage_id": stage_id,
@@ -711,27 +485,32 @@ def _render_time_window_v2(
     run_dir_str = st.session_state.get("_active_run_dir")
     run_id = st.session_state.get("_active_run_id", "unknown")
     if not run_dir_str:
-        st.warning("Run context unavailable.")
+        st.warning(tx("Run context unavailable.", "运行上下文不可用。"))
         return value
 
     mode = _time_window_mode(schema, root_schema)
     if mode != "window_list":
-        st.error("time_window schema invalid. Expected Optional[list[TimeWindow]].")
+        st.error(tx("time_window schema invalid. Expected Optional[list[TimeWindow]].", "time_window schema 无效，应为 Optional[list[TimeWindow]]。"))
         return value
 
     loading_slot = st.empty()
-    with loading_slot.container():
-        with st.spinner("Loading time-window data preview..."):
-            datasets_config = _build_datasets_config(Path(run_dir_str), schema, root_schema, mode)
+    with loading_slot.container(), st.spinner(tx("Loading time-window data preview...", "正在加载时间窗数据预览...")):
+        datasets_config = _build_datasets_config(Path(run_dir_str), schema, root_schema, mode)
     loading_slot.empty()
     if not datasets_config:
-        st.warning("No datasets found in run input.")
+        st.warning(tx("No datasets found in run input.", "在运行输入中未找到数据集。"))
         return value
 
-    bind_dataset_key = str(_schema_meta(schema, "bind_dataset_key", "") or "").strip() or None
+    bind_dataset_key = str(_schema_meta(schema, "bindDatasetKey", "") or "").strip() or None
     if bind_dataset_key:
         if bind_dataset_key not in datasets_config:
-            st.warning(f"Bound dataset `{bind_dataset_key}` not found in current run DS.")
+            st.warning(
+                tx(
+                    "Bound dataset `{dataset_key}` not found in current run DS.",
+                    "当前运行 DS 中未找到绑定数据集 `{dataset_key}`。",
+                    dataset_key=bind_dataset_key,
+                )
+            )
             return value
         datasets_config = {bind_dataset_key: datasets_config[bind_dataset_key]}
     default_dataset_key = bind_dataset_key or (next(iter(datasets_config.keys()), None))
@@ -826,13 +605,18 @@ def _render_json_editor(title, value, default, help_text, path):
     """Helper for raw JSON fields."""
     st.markdown(f"<small>{title}</small>", unsafe_allow_html=True)
     current = value if value is not None else (default if default is not None else [])
+    json_help = (
+        tx("{help_text} (Edit as JSON)", "{help_text}（以 JSON 编辑）", help_text=help_text)
+        if help_text
+        else tx("Edit as JSON", "以 JSON 编辑")
+    )
     text = st.text_area(
         title,
         value=json.dumps(current, indent=2, ensure_ascii=False),
-        help=f"{help_text} (Edit as JSON)",
+        help=json_help,
         key=path,
         label_visibility="collapsed",
-        height=100
+        height=100,
     )
     try:
         return json.loads(text) if text.strip() else current
@@ -840,11 +624,11 @@ def _render_json_editor(title, value, default, help_text, path):
         return current
 
 def render_schema_grid(
-    properties: Dict[str, dict],
-    current_values: Dict[str, Any],
+    properties: dict[str, dict],
+    current_values: dict[str, Any],
     prefix: str,
     root_schema: dict[str, Any],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Renders fields in a smart grid layout:
     - Compact fields (numbers, bools) get packed into columns (up to 4).
@@ -854,7 +638,7 @@ def render_schema_grid(
     time_window_fields: list[tuple[str, dict[str, Any], str]] = []
     for p_key, p_schema in properties.items():
         if _extract_ui_type(p_schema) == "time_window":
-            bind_key = str(_schema_meta(p_schema, "bind_dataset_key", "") or "").strip()
+            bind_key = str(_schema_meta(p_schema, "bindDatasetKey", "") or "").strip()
             time_window_fields.append((p_key, p_schema, bind_key))
 
     grouped_time_window_values: dict[str, Any] = {}
@@ -863,8 +647,11 @@ def render_schema_grid(
         missing_bind = [k for (k, _, b) in time_window_fields if not b]
         if missing_bind:
             st.error(
-                "time_window schema invalid: every time_window field must define "
-                f"`bind_dataset_key` (top-level or in json_schema_extra). Missing: {', '.join(missing_bind)}"
+                tx(
+                    "time_window schema invalid: every time_window field must define `bindDatasetKey` (top-level or in json_schema_extra). Missing: {missing}",
+                    "time_window schema 无效：每个 time_window 字段都必须定义 `bindDatasetKey`（顶层或 json_schema_extra 中）。缺少：{missing}",
+                    missing=", ".join(missing_bind),
+                )
             )
         else:
             bind_to_field: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -876,8 +663,11 @@ def render_schema_grid(
                     bind_to_field[bind_key] = (field_key, field_schema)
             if duplicate_binds:
                 st.error(
-                    "time_window schema invalid: duplicate bind_dataset_key detected: "
-                    f"{', '.join(sorted(set(duplicate_binds)))}"
+                    tx(
+                        "time_window schema invalid: duplicate bindDatasetKey detected: {keys}",
+                        "time_window schema 无效：检测到重复的 bindDatasetKey：{keys}",
+                        keys=", ".join(sorted(set(duplicate_binds))),
+                    )
                 )
             else:
                 run_dataset_keys: list[str] = []
@@ -888,26 +678,29 @@ def render_schema_grid(
                         run_dataset_keys = [str(ds.datasetKey) for ds in run_ds.datasets]
 
                 if not run_dataset_keys:
-                    st.error("Cannot resolve selected datasets from current run (input/ds.json missing or invalid).")
+                    st.error(tx("Cannot resolve selected datasets from current run (input/ds.json missing or invalid).", "无法从当前运行中解析已选数据集（input/ds.json 缺失或无效）。"))
                 else:
                     active_datasets = [ds_key for ds_key in run_dataset_keys if ds_key in bind_to_field]
                     if not active_datasets:
                         st.error(
-                            "No time_window field matches selected run datasets "
-                            f"`{', '.join(run_dataset_keys)}`."
+                            tx(
+                                "No time_window field matches selected run datasets `{dataset_keys}`.",
+                                "没有 time_window 字段匹配当前选中的运行数据集 `{dataset_keys}`。",
+                                dataset_keys=", ".join(run_dataset_keys),
+                            )
                         )
                     else:
                         group_schema = bind_to_field[active_datasets[0]][1]
                         mode = _time_window_mode(group_schema, root_schema)
                         if mode != "window_list":
-                            st.error("time_window schema invalid. Expected Optional[list[TimeWindow]].")
+                            st.error(tx("time_window schema invalid. Expected Optional[list[TimeWindow]].", "time_window schema 无效，应为 Optional[list[TimeWindow]]。"))
                         elif not isinstance(run_dir_str, str) or not run_dir_str.strip():
-                            st.error("Run context unavailable for time_window widget.")
+                            st.error(tx("Run context unavailable for time_window widget.", "time_window 组件的运行上下文不可用。"))
                         else:
-                            with st.spinner("Loading time-window data preview..."):
+                            with st.spinner(tx("Loading time-window data preview...", "正在加载时间窗数据预览...")):
                                 datasets_config = _build_datasets_config(Path(run_dir_str), group_schema, root_schema, mode)
                             if not datasets_config:
-                                st.error("No datasets found in run input.")
+                                st.error(tx("No datasets found in run input.", "在运行输入中未找到数据集。"))
                             else:
                                 datasets_config = {k: v for k, v in datasets_config.items() if k in set(active_datasets)}
                                 for dataset_key in active_datasets:
@@ -917,9 +710,9 @@ def render_schema_grid(
                                         max_windows = 64
                                     if dataset_key in datasets_config:
                                         datasets_config[dataset_key]["window_count"] = {"min": min_windows, "max": max_windows}
-                                        datasets_config[dataset_key]["window_slots"] = _schema_meta(field_schema, "window_slots", [])
+                                        datasets_config[dataset_key]["window_slots"] = _schema_meta(field_schema, "windowSlots", [])
                                         datasets_config[dataset_key]["window_slot_fallback_note"] = (
-                                            str(_schema_meta(field_schema, "window_slot_fallback_note", "") or "").strip()
+                                            str(_schema_meta(field_schema, "windowSlotFallbackNote", "") or "").strip()
                                         )
 
                                 dataset_to_field = {dataset_key: bind_to_field[dataset_key][0] for dataset_key in active_datasets}
@@ -935,9 +728,7 @@ def render_schema_grid(
         if not compact_buffer:
             return
         
-        # Calculate optimal columns (max 4, min 2)
         n_items = len(compact_buffer)
-        n_cols = 4 if n_items >= 4 else (n_items if n_items > 0 else 1)
         
         # Split into rows if > 4 items? Simple logic: Just wrap
         # Actually st.columns handles wrapping poorly, better to batch by 4
@@ -945,7 +736,7 @@ def render_schema_grid(
         for i in range(0, n_items, 4):
             batch = compact_buffer[i : i+4]
             cols = st.columns(len(batch))
-            for col, (b_key, b_schema) in zip(cols, batch):
+            for col, (b_key, b_schema) in zip(cols, batch, strict=True):
                 with col:
                     val = current_values.get(b_key)
                     result[b_key] = render_field_widget(b_key, b_schema, val, f"{prefix}.{b_key}", root_schema)
@@ -1016,7 +807,7 @@ def load_params(run_dir: Path) -> dict:
 runs = run_mgr.list_runs()
 
 if not runs:
-    st.info("No runs available. Create a run from the Selection page.")
+    st.info(tx("No runs available. Create a run from the Selection page.", "没有可用运行。请先在“运行配置”页面创建运行。"))
     st.stop()
 
 pending_runs = [r for r in runs if r.status == RunStatus.PENDING]
@@ -1025,15 +816,15 @@ other_runs = [r for r in runs if r.status != RunStatus.PENDING]
 # ------------------------------------------
 # 1. Pending Runs (Editor Workspace)
 # ------------------------------------------
-st.subheader("Pending Runs")
+st.subheader(tx("Pending Runs", "待运行任务"))
 
 if not pending_runs:
-    st.info("No pending runs waiting for execution.")
+    st.info(tx("No pending runs waiting for execution.", "没有等待执行的待运行任务。"))
 else:
     # Use tabs for context switching
     tabs = st.tabs([f"⚙️ {run.run_id}" for run in pending_runs])
     
-    for tab, run in zip(tabs, pending_runs):
+    for tab, run in zip(tabs, pending_runs, strict=True):
         with tab:
             run_dir = run_mgr.get_run_dir(run.run_id)
             st.session_state["_active_run_id"] = run.run_id
@@ -1045,23 +836,26 @@ else:
             # --- Layout: Top Info Bar ---
             with st.container(border=True):
                 c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
-                with c1: st.caption(f"**Snapshot:** `{run.snapshot_id}`")
-                with c2: st.caption(f"**Algo:** `{run.algorithm_id}` v{run.algorithm_version}")
-                with c3: st.caption(f"**Created:** {run.created_at}")
-                with c4: 
+                with c1:
+                    st.caption(tx("**Snapshot:** `{snapshot_id}`", "**快照：** `{snapshot_id}`", snapshot_id=run.snapshot_id))
+                with c2:
+                    st.caption(tx("**Algo:** `{algorithm_id}` v{version}", "**算法：** `{algorithm_id}` v{version}", algorithm_id=run.algorithm_id, version=run.algorithm_version))
+                with c3:
+                    st.caption(tx("**Created:** {created_at}", "**创建时间：** {created_at}", created_at=run.created_at))
+                with c4:
                     # Timeout setting tucked away here
-                    timeout = st.number_input("Timeout (s)", value=300, step=10, key=f"to_{run.run_id}", label_visibility="collapsed")
+                    timeout = st.number_input(tx("Timeout (s)", "超时（秒）"), value=300, step=10, key=f"to_{run.run_id}", label_visibility="collapsed")
 
             # --- Layout: Parameters Grid ---
-            st.markdown("##### Parameters")
+            st.markdown(tx("##### Parameters", "##### 参数"))
             with st.container(border=True):
                 if schema.get("type") == "object":
                     props = schema.get("properties", {})
                     # CALL THE GRID ENGINE
                     new_params = render_schema_grid(props, current_params, prefix=f"run_{run.run_id}", root_schema=schema)
                 else:
-                    st.info("Schema is not an object, editing raw JSON.")
-                    new_params = _render_json_editor("Raw Params", current_params, {}, "", f"run_raw_{run.run_id}")
+                    st.info(tx("Schema is not an object, editing raw JSON.", "Schema 不是 object，将直接编辑原始 JSON。"))
+                    new_params = _render_json_editor(tx("Raw Params", "原始参数"), current_params, {}, "", f"run_raw_{run.run_id}")
 
             st.divider()
             
@@ -1070,30 +864,30 @@ else:
             _, col_btns = st.columns([3, 4])
             with col_btns:
                 b1, b2, b3 = st.columns([1, 1, 1.5], gap="small")
-                
+
                 with b1:
-                    if st.button("🚫 Cancel", key=f"cancel_{run.run_id}", width="stretch"):
+                    if st.button(tx("🚫 Cancel", "🚫 取消"), key=f"cancel_{run.run_id}", width="stretch"):
                         try:
                             run_mgr.delete_run(run.run_id)
-                            st.success("Cancelled")
+                            st.success(tx("Cancelled", "已取消"))
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {e}")
-                
+                            st.error(tx("Error: {error}", "错误：{error}", error=e))
+
                 with b2:
-                    if st.button("💾 Save", key=f"save_{run.run_id}", width="stretch"):
+                    if st.button(tx("💾 Save", "💾 保存"), key=f"save_{run.run_id}", width="stretch"):
                         try:
                             (run_dir / "input").mkdir(parents=True, exist_ok=True)
                             (run_dir / "input" / "params.json").write_text(
                                 json.dumps(new_params, indent=2, ensure_ascii=False),
                                 encoding="utf-8",
                             )
-                            st.toast("Parameters saved successfully!", icon="💾")
+                            st.toast(tx("Parameters saved successfully!", "参数保存成功！"), icon="💾")
                         except Exception as e:
-                            st.error(f"Save failed: {e}")
+                            st.error(tx("Save failed: {error}", "保存失败：{error}", error=e))
 
                 with b3:
-                    if st.button("▶️ Run Algorithm", key=f"exec_{run.run_id}", type="primary", width="stretch"):
+                    if st.button(tx("▶️ Run Algorithm", "▶️ 运行算法"), key=f"exec_{run.run_id}", type="primary", width="stretch"):
                         try:
                             # Auto-save before run
                             (run_dir / "input").mkdir(parents=True, exist_ok=True)
@@ -1102,61 +896,67 @@ else:
                                 encoding="utf-8",
                             )
 
-                            with st.spinner("Initializing execution..."):
+                            with st.spinner(tx("Initializing execution...", "正在初始化执行...")):
                                 result = run_mgr.execute(run.run_id, timeout_s=int(timeout))
 
                             if result.error:
-                                st.error(f"Run Finished: {result.status.value}\n{result.error}")
+                                st.error(
+                                    tx(
+                                        "Run Finished: {status}\n{error}",
+                                        "运行结束：{status}\n{error}",
+                                        status=run_status_label(result.status),
+                                        error=result.error,
+                                    )
+                                )
                             else:
                                 # Navigate to Results page with executed run
                                 st.session_state.executed_run_id = run.run_id
                                 st.switch_page("pages/5_Results.py")
                         except Exception as e:
-                            st.error(f"Execution Exception: {e}")
+                            st.error(tx("Execution Exception: {error}", "执行异常：{error}", error=e))
 
 
 # ------------------------------------------
 # 2. History (Other Runs)
 # ------------------------------------------
-st.subheader("Run History")
+st.subheader(tx("Run History", "运行历史"))
 
 if not other_runs:
-    st.caption("No historical runs.")
+    st.caption(tx("No historical runs.", "没有历史运行记录。"))
 
 other_runs_reversed = other_runs[::-1]
 
 for run in other_runs_reversed:
     status_config = {
-        RunStatus.PENDING:   ("⏳", "Pending", "gray"),
-        RunStatus.RUNNING:   ("🔄", "Running", "blue"),
-        RunStatus.SUCCEEDED: ("✅", "Succeeded", "green"),
-        RunStatus.FAILED:    ("❌", "Failed", "red"),
-        RunStatus.TIMEOUT:   ("⏱️", "Timeout", "orange"),
+        RunStatus.PENDING: ("⏳", run_status_label(RunStatus.PENDING), "gray"),
+        RunStatus.RUNNING: ("🔄", run_status_label(RunStatus.RUNNING), "blue"),
+        RunStatus.SUCCEEDED: ("✅", run_status_label(RunStatus.SUCCEEDED), "green"),
+        RunStatus.FAILED: ("❌", run_status_label(RunStatus.FAILED), "red"),
+        RunStatus.TIMEOUT: ("⏱️", run_status_label(RunStatus.TIMEOUT), "orange"),
     }
-    icon, label, color = status_config.get(run.status, ("❓", "Unknown", "gray"))
+    icon, label, color = status_config.get(run.status, ("❓", run_status_label("unknown"), "gray"))
     
-    with st.expander(f"{icon} {run.run_id}", expanded=False):
-        with st.container(border=True):
-            # Info
-            c1, c2, c3 = st.columns([3, 2, 2])
-            with c1: 
-                st.caption("Context")
-                st.markdown(f"**{run.algorithm_id}** v{run.algorithm_version}")
-                st.text(f"Snap: {run.snapshot_id}")
-            with c2:
-                st.caption("Timing")
-                st.text(f"Start: {run.started_at or '--'}")
-                st.text(f"End:   {run.completed_at or '--'}")
-            with c3:
-                st.caption("Status")
-                st.markdown(f":{color}[**{label}**]")
-                if run.error:
-                    st.error(run.error)
-            
-            # Params Read-only
-            st.divider()
-            st.caption("Run Parameters")
-            run_dir = run_mgr.get_run_dir(run.run_id)
-            params_view = load_params(run_dir)
-            if params_view:
-                st.code(json.dumps(params_view, indent=2, ensure_ascii=False), language="json")
+    with st.expander(f"{icon} {run.run_id}", expanded=False), st.container(border=True):
+        # Info
+        c1, c2, c3 = st.columns([3, 2, 2])
+        with c1:
+            st.caption(tx("Context", "上下文"))
+            st.markdown(f"**{run.algorithm_id}** v{run.algorithm_version}")
+            st.text(tx("Snap: {snapshot_id}", "快照：{snapshot_id}", snapshot_id=run.snapshot_id))
+        with c2:
+            st.caption(tx("Timing", "时间"))
+            st.text(tx("Start: {value}", "开始：{value}", value=run.started_at or "--"))
+            st.text(tx("End:   {value}", "结束：{value}", value=run.completed_at or "--"))
+        with c3:
+            st.caption(tx("Status", "状态"))
+            st.markdown(f":{color}[**{label}**]")
+            if run.error:
+                st.error(run.error)
+
+        # Params Read-only
+        st.divider()
+        st.caption(tx("Run Parameters", "运行参数"))
+        run_dir = run_mgr.get_run_dir(run.run_id)
+        params_view = load_params(run_dir)
+        if params_view:
+            st.code(json.dumps(params_view, indent=2, ensure_ascii=False), language="json")

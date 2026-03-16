@@ -16,12 +16,17 @@ from fraclab_sdk.errors import SnapshotError
 from fraclab_sdk.snapshot import SnapshotLibrary
 from fraclab_sdk.version import __version__ as SDK_VERSION
 from fraclab_sdk.workbench import ui_styles
+from fraclab_sdk.workbench.i18n import page_title, tx
 from fraclab_sdk.workbench.utils import get_workspace_dir
 
-st.set_page_config(page_title="Snapshots", page_icon="📦", layout="wide", initial_sidebar_state="expanded")
-st.title("Snapshots")
-
-ui_styles.apply_global_styles()
+st.set_page_config(
+    page_title=page_title("snapshots"),
+    page_icon="📦",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+ui_styles.apply_global_styles("snapshots")
+ui_styles.render_page_header(tx("Snapshots", "快照管理"))
 
 
 config = SDKConfig()
@@ -85,21 +90,21 @@ def render_manifest_fields(
     key_prefix: str,
 ) -> dict:
     """Render common manifest fields and return updated values."""
-    name_val = st.text_input("Name", value=name, key=f"{key_prefix}_name")
-    summary_val = st.text_area("Summary", value=summary, key=f"{key_prefix}_summary")
+    name_val = st.text_input(tx("Name", "名称"), value=name, key=f"{key_prefix}_name")
+    summary_val = st.text_area(tx("Summary", "摘要"), value=summary, key=f"{key_prefix}_summary")
     
     c1, c2 = st.columns(2)
     with c1:
-        contract_val = st.text_input("Contract Version", value=contract_version, key=f"{key_prefix}_contract")
+        contract_val = st.text_input(tx("Contract Version", "契约版本"), value=contract_version, key=f"{key_prefix}_contract")
     with c2:
-        code_val = st.text_input("Code Version", value=code_version, key=f"{key_prefix}_code")
+        code_val = st.text_input(tx("Code Version", "代码版本"), value=code_version, key=f"{key_prefix}_code")
         
     st.markdown("---")
-    st.caption("Authors Info")
+    st.caption(tx("Authors Info", "作者信息"))
     
     authors_entries = authors or [{"name": "", "email": "", "organization": ""}]
     author_count = st.number_input(
-        "Authors count",
+        tx("Authors count", "作者数量"),
         min_value=1,
         max_value=max(len(authors_entries), 10),
         value=len(authors_entries),
@@ -118,19 +123,19 @@ def render_manifest_fields(
         cols = st.columns(3)
         with cols[0]:
             name_a = st.text_input(
-                f"Author {idx+1} Name",
+                tx("Author {index} Name", "作者 {index} 姓名", index=idx + 1),
                 value=author.get("name", ""),
                 key=f"{key_prefix}_author_name_{idx}",
             )
         with cols[1]:
             email_a = st.text_input(
-                f"Author {idx+1} Email",
+                tx("Author {index} Email", "作者 {index} 邮箱", index=idx + 1),
                 value=author.get("email", ""),
                 key=f"{key_prefix}_author_email_{idx}",
             )
         with cols[2]:
             org_a = st.text_input(
-                f"Author {idx+1} Organization",
+                tx("Author {index} Organization", "作者 {index} 机构", index=idx + 1),
                 value=author.get("organization", ""),
                 key=f"{key_prefix}_author_org_{idx}",
             )
@@ -138,11 +143,11 @@ def render_manifest_fields(
         
     st.markdown("---")
     tags_val = st.text_input(
-        "Tags (comma-separated)",
+        tx("Tags (comma-separated)", "标签（逗号分隔）"),
         value=",".join(tags or []),
         key=f"{key_prefix}_tags",
     )
-    notes_val = st.text_area("Notes", value=notes or "", key=f"{key_prefix}_notes")
+    notes_val = st.text_area(tx("Notes", "备注"), value=notes or "", key=f"{key_prefix}_notes")
 
     return {
         "name": name_val,
@@ -158,10 +163,10 @@ def render_manifest_fields(
 # Dialogs (Modals)
 # ==========================================
 
-@st.dialog("Create New Algorithm")
+@st.dialog(tx("Create New Algorithm", "创建新算法"))
 def show_create_algo_dialog():
     with st.form("create_algo_form"):
-        algo_id = st.text_input("Algorithm ID (e.g. my-algo)", key="create_algo_id")
+        algo_id = st.text_input(tx("Algorithm ID (e.g. my-algo)", "算法 ID（例如 my-algo）"), key="create_algo_id")
         manifest_vals = render_manifest_fields(
             name="",
             summary="",
@@ -176,15 +181,15 @@ def show_create_algo_dialog():
         f_c1, f_c2 = st.columns([1, 4])
         with f_c1:
             # Updated API
-            create_submit = st.form_submit_button("Create", type="primary", width="stretch")
+            create_submit = st.form_submit_button(tx("Create", "创建"), type="primary", width="stretch")
         with f_c2:
             pass # form layout spacer
 
     if create_submit:
         if not algo_id or not manifest_vals["code_version"]:
-            st.error("Algorithm ID and Code Version are required.")
+            st.error(tx("Algorithm ID and Code Version are required.", "算法 ID 和代码版本不能为空。"))
         elif not re.match(r"^[A-Za-z0-9_-]+$", algo_id):
-            st.error("Algorithm ID may only contain letters, numbers, _ or -.")
+            st.error(tx("Algorithm ID may only contain letters, numbers, _ or -.", "算法 ID 只能包含字母、数字、_ 或 -。"))
         else:
             ws_dir: Path | None = None
             try:
@@ -202,7 +207,7 @@ def show_create_algo_dialog():
                 algo_id, version = algorithm_lib.import_algorithm(ws_dir)
                 _set_algorithm_focus(algo_id, version)
                 _set_ui_feedback(
-                    f"Created and imported: {algo_id} v{version}",
+                    tx("Created and imported: {algorithm_id} v{version}", "已创建并导入：{algorithm_id} v{version}", algorithm_id=algo_id, version=version),
                     scroll_target="imported-algorithms-anchor",
                 )
                 st.rerun()
@@ -211,27 +216,29 @@ def show_create_algo_dialog():
             except Exception as e:
                 if ws_dir is not None and ws_dir.exists():
                     shutil.rmtree(ws_dir, ignore_errors=True)
-                st.error(f"Create failed: {e}")
+                st.error(tx("Create failed: {error}", "创建失败：{error}", error=e))
 
 
-@st.dialog("Edit Manifest")
+@st.dialog(tx("Edit Manifest", "编辑 Manifest"))
 def show_edit_manifest_dialog(algo_id, version, manifest_path):
     try:
         manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception as e:
-        st.error(f"Failed to load manifest: {e}")
+        st.error(tx("Failed to load manifest: {error}", "加载 manifest 失败：{error}", error=e))
         return
 
     files_section = manifest_data.get("files")
     if not isinstance(files_section, dict):
-        st.error("Invalid manifest: missing required files section")
+        st.error(tx("Invalid manifest: missing required files section", "无效 manifest：缺少 files 段"))
         return
 
     required_file_keys = ("paramsSchemaPath", "outputContractPath")
     if any(not isinstance(files_section.get(k), str) or not files_section.get(k) for k in required_file_keys):
         st.error(
-            "Invalid manifest: files.paramsSchemaPath/"
-            "files.outputContractPath are required"
+            tx(
+                "Invalid manifest: files.paramsSchemaPath/files.outputContractPath are required",
+                "无效 manifest：files.paramsSchemaPath/files.outputContractPath 为必填项",
+            )
         )
         return
 
@@ -246,7 +253,7 @@ def show_edit_manifest_dialog(algo_id, version, manifest_path):
             notes=manifest_data.get("notes"),
             key_prefix=f"manifest_{algo_id}_{version}",
         )
-        save_submit = st.form_submit_button("Save Changes", type="primary")
+        save_submit = st.form_submit_button(tx("Save Changes", "保存修改"), type="primary")
 
     if save_submit:
         try:
@@ -268,21 +275,21 @@ def show_edit_manifest_dialog(algo_id, version, manifest_path):
             if isinstance(files_section.get("dsPath"), str) and files_section.get("dsPath"):
                 manifest_data["files"]["dsPath"] = files_section["dsPath"]
             manifest_path.write_text(json.dumps(manifest_data, indent=2), encoding="utf-8")
-            st.success("Manifest saved successfully")
+            st.success(tx("Manifest saved successfully", "Manifest 保存成功"))
             st.rerun()
         except Exception as e:
-            st.error(f"Save failed: {e}")
+            st.error(tx("Save failed: {error}", "保存失败：{error}", error=e))
 
 
 # ==========================================
 # 1. Snapshot Management
 # ==========================================
-st.subheader("Import Snapshot")
+st.subheader(tx("Import Snapshot", "导入快照"))
 
 with st.container(border=True):
     # 1. File Uploader
     uploaded_snapshot = st.file_uploader(
-        "Upload Snapshot (zip file)",
+        tx("Upload Snapshot (zip file)", "上传快照（zip 文件）"),
         type=["zip"],
         label_visibility="collapsed",
         key="snapshot_uploader",
@@ -297,8 +304,8 @@ with st.container(border=True):
             st.markdown(f"<div style='padding-top: 5px; color: #444;'>📄 <b>{uploaded_snapshot.name}</b> <small>({uploaded_snapshot.size / 1024:.1f} KB)</small></div>", unsafe_allow_html=True)
         with c_btn:
             # Updated API
-            if st.button("Import Snapshot", type="primary", key="import_snapshot_btn", width="stretch"):
-                with st.spinner("Importing snapshot..."):
+            if st.button(tx("Import Snapshot", "导入快照"), type="primary", key="import_snapshot_btn", width="stretch"):
+                with st.spinner(tx("Importing snapshot...", "正在导入快照...")):
                     try:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
                             tmp_file.write(uploaded_snapshot.getvalue())
@@ -307,15 +314,15 @@ with st.container(border=True):
                         snapshot_id = snapshot_lib.import_snapshot(tmp_path)
                         _set_snapshot_focus(snapshot_id)
                         _set_ui_feedback(
-                            f"Imported snapshot: {snapshot_id}",
+                            tx("Imported snapshot: {snapshot_id}", "已导入快照：{snapshot_id}", snapshot_id=snapshot_id),
                             scroll_target="imported-snapshots-anchor",
                         )
                         tmp_path.unlink(missing_ok=True)
                         st.rerun()
                     except SnapshotError as e:
-                        st.error(f"Import failed: {e}")
+                        st.error(tx("Import failed: {error}", "导入失败：{error}", error=e))
                     except Exception as e:
-                        st.error(f"Error: {e}")
+                        st.error(tx("Error: {error}", "错误：{error}", error=e))
 
 st.divider()
 
@@ -325,13 +332,13 @@ if pending_flash:
     st.toast(pending_flash, icon="✅")
 
 st.markdown('<div id="imported-snapshots-anchor"></div>', unsafe_allow_html=True)
-st.subheader("Imported Snapshots")
+st.subheader(tx("Imported Snapshots", "已导入快照"))
 
 snapshots = snapshot_lib.list_snapshots()
 focus_snapshot_id = st.session_state.pop(FOCUS_SNAPSHOT_KEY, None)
 
 if not snapshots:
-    st.info("No snapshots imported yet")
+    st.info(tx("No snapshots imported yet", "还没有已导入的快照。"))
 else:
     if focus_snapshot_id:
         snapshots = sorted(
@@ -346,57 +353,57 @@ else:
                 c1, c2, c3 = st.columns([3, 5, 1])
                 
                 with c1:
-                    st.caption("Bundle ID")
+                    st.caption(tx("Bundle ID", "包 ID"))
                     st.code(snap.bundle_id, language="text")
-                    st.caption("Imported At")
+                    st.caption(tx("Imported At", "导入时间"))
                     st.markdown(f"**{snap.imported_at}**")
 
                 with c2:
-                    st.caption("DRS (Data Requirement Specification)")
+                    st.caption(tx("DRS (Data Requirement Specification)", "DRS（数据需求规范）"))
                     # 获取完整的 Snapshot 对象以读取 DRS
                     try:
                         full_snap = snapshot_lib.get_snapshot(snap.snapshot_id)
                         drs_data = full_snap.drs.model_dump(exclude_none=True)
                         st.code(json.dumps(drs_data, indent=2, ensure_ascii=False), language="json")
                     except Exception as e:
-                        st.error(f"Failed to load DRS: {e}")
+                        st.error(tx("Failed to load DRS: {error}", "加载 DRS 失败：{error}", error=e))
 
                 with c3:
                     st.write("") # Spacer
-                    if st.button("Delete", key=f"del_{snap.snapshot_id}", type="secondary"):
+                    if st.button(tx("Delete", "删除"), key=f"del_{snap.snapshot_id}", type="secondary"):
                         try:
                             snapshot_lib.delete_snapshot(snap.snapshot_id)
-                            st.success(f"Deleted")
+                            st.success(tx("Deleted", "已删除"))
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Delete failed: {e}")
+                            st.error(tx("Delete failed: {error}", "删除失败：{error}", error=e))
 
 st.divider()
 
 # ==========================================
 # 2. Algorithm Management
 # ==========================================
-st.subheader("Algorithm Workspace")
+st.subheader(tx("Algorithm Workspace", "算法工作区"))
 
 # Action Bar
 col_create, col_spacer = st.columns([1, 4])
 with col_create:
     # Updated API
-    if st.button("✨ Create New Algorithm", key="create_algo_btn", width="stretch"):
+    if st.button(tx("✨ Create New Algorithm", "✨ 创建新算法"), key="create_algo_btn", width="stretch"):
         show_create_algo_dialog()
 
 # Upload Section (Expanded by Default)
-with st.expander("📤 Import Existing Algorithm", expanded=True):
+with st.expander(tx("📤 Import Existing Algorithm", "📤 导入现有算法"), expanded=True):
     uploaded_algorithm = st.file_uploader(
-        "Upload Algorithm (zip or .py)",
+        tx("Upload Algorithm (zip or .py)", "上传算法（zip 或 .py）"),
         type=["zip", "py"],
         key="algorithm_uploader",
     )
 
     if uploaded_algorithm is not None:
         if uploaded_algorithm.name.endswith(".zip"):
-             if st.button("Import Algorithm Zip", type="primary", key="import_algo_btn_zip"):
-                with st.spinner("Importing algorithm from zip..."):
+             if st.button(tx("Import Algorithm Zip", "导入算法 Zip"), type="primary", key="import_algo_btn_zip"):
+                with st.spinner(tx("Importing algorithm from zip...", "正在从 zip 导入算法...")):
                     try:
                         with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as tmp_file:
                             tmp_file.write(uploaded_algorithm.getvalue())
@@ -404,16 +411,16 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                         algo_id, version = algorithm_lib.import_algorithm(tmp_path)
                         _set_algorithm_focus(algo_id, version)
                         _set_ui_feedback(
-                            f"Imported algorithm: {algo_id} v{version}",
+                            tx("Imported algorithm: {algorithm_id} v{version}", "已导入算法：{algorithm_id} v{version}", algorithm_id=algo_id, version=version),
                             scroll_target="imported-algorithms-anchor",
                         )
                         tmp_path.unlink(missing_ok=True)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Import failed: {e}")
+                        st.error(tx("Import failed: {error}", "导入失败：{error}", error=e))
         elif uploaded_algorithm.name.endswith(".py"):
-             if st.button("Import Single Python File", type="primary", key="import_algo_btn_py"):
-                with st.spinner("Importing algorithm from .py..."):
+             if st.button(tx("Import Single Python File", "导入单个 Python 文件"), type="primary", key="import_algo_btn_py"):
+                with st.spinner(tx("Importing algorithm from .py...", "正在从 .py 导入算法...")):
                     try:
                         with tempfile.TemporaryDirectory() as tmp_dir:
                             tmp_dir_path = Path(tmp_dir)
@@ -444,7 +451,7 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                                 "codeVersion": "local",
                                 "contractVersion": "1.0.0",
                                 "name": algo_id,
-                                "summary": "Imported from single python file",
+                                "summary": tx("Imported from single python file", "从单个 Python 文件导入"),
                                 "authors": [{"name": "unknown"}],
                                 "files": {
                                     "paramsSchemaPath": "dist/params.schema.json",
@@ -458,23 +465,23 @@ with st.expander("📤 Import Existing Algorithm", expanded=True):
                             algo_id, version = algorithm_lib.import_algorithm(tmp_dir_path)
                             _set_algorithm_focus(algo_id, version)
                             _set_ui_feedback(
-                                f"Imported algorithm: {algo_id} v{version}",
+                                tx("Imported algorithm: {algorithm_id} v{version}", "已导入算法：{algorithm_id} v{version}", algorithm_id=algo_id, version=version),
                                 scroll_target="imported-algorithms-anchor",
                             )
                             st.rerun()
                     except Exception as e:
-                        st.error(f"Import failed: {e}")
+                        st.error(tx("Import failed: {error}", "导入失败：{error}", error=e))
 
 st.divider()
 
 st.markdown('<div id="imported-algorithms-anchor"></div>', unsafe_allow_html=True)
-st.subheader("Imported Algorithms")
+st.subheader(tx("Imported Algorithms", "已导入算法"))
 
 algorithms = algorithm_lib.list_algorithms()
 focus_algo_key = st.session_state.pop(FOCUS_ALGO_KEY, None)
 
 if not algorithms:
-    st.info("No algorithms imported yet")
+    st.info(tx("No algorithms imported yet", "还没有已导入的算法。"))
 else:
     if focus_algo_key:
         algorithms = sorted(
@@ -490,27 +497,27 @@ else:
                 # Header info
                 head_c1, head_c2, head_c3 = st.columns([3, 2, 2])
                 with head_c1:
-                    st.caption("Name")
-                    st.markdown(f"**{algo.name or 'N/A'}**")
+                    st.caption(tx("Name", "名称"))
+                    st.markdown(f"**{algo.name or tx('N/A', '无')}**")
                 with head_c2:
-                    st.caption("Contract")
-                    st.code(algo.contract_version or 'N/A', language="text")
+                    st.caption(tx("Contract", "契约"))
+                    st.code(algo.contract_version or tx("N/A", "无"), language="text")
                 with head_c3:
-                    st.caption("Imported")
+                    st.caption(tx("Imported", "导入时间"))
                     st.text(algo.imported_at)
 
                 st.markdown("---")
                 
                 # Content info
-                st.caption("Summary")
+                st.caption(tx("Summary", "摘要"))
                 if getattr(algo, 'summary', ''):
                     st.info(algo.summary)
                 else:
-                    st.text("No summary provided.")
+                    st.text(tx("No summary provided.", "没有摘要。"))
                 
                 notes = getattr(algo, "notes", None)
                 if notes:
-                    st.caption("Notes")
+                    st.caption(tx("Notes", "备注"))
                     st.write(notes)
 
                 st.markdown("---")
@@ -521,20 +528,20 @@ else:
                 with act_c1:
                     manifest_path = algorithm_lib.get_algorithm(algo.algorithm_id, algo.version).directory / "manifest.json"
                     if manifest_path.exists():
-                        if st.button("📝 Edit Manifest", key=f"edit_manifest_btn_{algo.algorithm_id}_{algo.version}"):
+                        if st.button(tx("📝 Edit Manifest", "📝 编辑 Manifest"), key=f"edit_manifest_btn_{algo.algorithm_id}_{algo.version}"):
                             show_edit_manifest_dialog(algo.algorithm_id, algo.version, manifest_path)
-                
+
                 with act_c2:
-                    if st.button("🗑️ Delete", key=f"del_algo_{algo.algorithm_id}_{algo.version}"):
+                    if st.button(tx("🗑️ Delete", "🗑️ 删除"), key=f"del_algo_{algo.algorithm_id}_{algo.version}"):
                         try:
                             algorithm_lib.delete_algorithm(algo.algorithm_id, algo.version)
                             ws_dir = WORKSPACE_ROOT / algo.algorithm_id / algo.version
                             if ws_dir.exists():
                                 shutil.rmtree(ws_dir, ignore_errors=True)
-                            st.success(f"Deleted")
+                            st.success(tx("Deleted", "已删除"))
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Delete failed: {e}")
+                            st.error(tx("Delete failed: {error}", "删除失败：{error}", error=e))
 
 pending_scroll_target = st.session_state.pop(SCROLL_TARGET_KEY, None)
 if pending_scroll_target:

@@ -1,7 +1,7 @@
 """Validation tools for InputSpec, OutputContract, and run manifests.
 
 Provides:
-- InputSpec linting (json_schema_extra validation, show_when structure)
+- InputSpec linting (json_schema_extra validation, showWhen structure)
 - OutputContract validation (structure, key uniqueness)
 - Bundle validation (hash integrity)
 - RunManifest vs OutputContract alignment validation
@@ -21,7 +21,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError as PydanticValidationError
+
 from fraclab_sdk.errors import AlgorithmError
+from fraclab_sdk.models import OutputContract, RunOutputManifest
 
 
 class ValidationSeverity(Enum):
@@ -66,26 +69,45 @@ class ValidationResult:
 # =============================================================================
 
 # Allowed json_schema_extra keys (spec-defined)
-ALLOWED_JSON_SCHEMA_EXTRA_KEYS = {
-    "group", "unit", "step", "ui_type", "show_when",
-    "enum_labels", "order", "collapsible",
-    "bind_dataset_key", "window_slots", "window_slot_fallback_note",
+CAMEL_JSON_SCHEMA_EXTRA_KEYS = {
+    "group",
+    "unit",
+    "step",
+    "uiType",
+    "showWhen",
+    "enumLabels",
+    "order",
+    "collapsible",
+    "bindDatasetKey",
+    "windowSlots",
+    "windowSlotFallbackNote",
 }
+
+LEGACY_TO_CAMEL_JSON_SCHEMA_EXTRA_KEYS = {
+    "ui_type": "uiType",
+    "show_when": "showWhen",
+    "enum_labels": "enumLabels",
+    "bind_dataset_key": "bindDatasetKey",
+    "window_slots": "windowSlots",
+    "window_slot_fallback_note": "windowSlotFallbackNote",
+}
+
+LEGACY_JSON_SCHEMA_EXTRA_KEYS = set(LEGACY_TO_CAMEL_JSON_SCHEMA_EXTRA_KEYS)
 
 # Type constraints for json_schema_extra keys
 JSON_SCHEMA_EXTRA_TYPES: dict[str, type | tuple[type, ...]] = {
     "group": str,
     "unit": str,
-    "ui_type": str,
+    "uiType": str,
     "order": int,
     "collapsible": bool,
     "step": (int, float),
-    "bind_dataset_key": str,
-    "window_slots": list,
-    "window_slot_fallback_note": str,
+    "bindDatasetKey": str,
+    "windowSlots": list,
+    "windowSlotFallbackNote": str,
 }
 
-# Canonical show_when operators (per InputSpec spec)
+# Canonical showWhen operators (per InputSpec spec)
 CANONICAL_SHOW_WHEN_OPS = {
     "equals", "not_equals", "gt", "gte", "lt", "lte", "in", "not_in"
 }
@@ -160,9 +182,7 @@ def _is_float_range_schema(schema: dict[str, Any], root_schema: dict[str, Any]) 
     max_schema = props["max"] if isinstance(props["max"], dict) else {}
     min_schema = _normalize_schema(min_schema, root_schema)
     max_schema = _normalize_schema(max_schema, root_schema)
-    if not _is_numeric_schema(min_schema) or not _is_numeric_schema(max_schema):
-        return False
-    return True
+    return _is_numeric_schema(min_schema) and _is_numeric_schema(max_schema)
 
 
 def _validate_time_window_shape(
@@ -171,7 +191,7 @@ def _validate_time_window_shape(
     path: str,
     issues: list[ValidationIssue],
 ) -> None:
-    """Validate ui_type=time_window schema shape.
+    """Validate uiType=time_window schema shape.
 
     The ONLY allowed shape is Optional[list[TimeWindow]] where TimeWindow is
     {min: number, max: number}. The field JSON schema must be a nullable array
@@ -203,7 +223,7 @@ def _validate_time_window_shape(
                 severity=ValidationSeverity.ERROR,
                 code="TIME_WINDOW_NOT_OPTIONAL",
                 message=(
-                    "ui_type='time_window' field must be Optional[list[TimeWindow]]. "
+                    "uiType='time_window' field must be Optional[list[TimeWindow]]. "
                     "Bare list[TimeWindow] is not allowed."
                 ),
                 path=path,
@@ -218,7 +238,7 @@ def _validate_time_window_shape(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="TIME_WINDOW_SCHEMA_INVALID",
-                message="ui_type='time_window' requires Optional[list[TimeWindow]]",
+                message="uiType='time_window' requires Optional[list[TimeWindow]]",
                 path=path,
             )
         )
@@ -231,7 +251,7 @@ def _validate_time_window_shape(
                 severity=ValidationSeverity.ERROR,
                 code="TIME_WINDOW_SCHEMA_INVALID",
                 message=(
-                    "ui_type='time_window' array items must be TimeWindow "
+                    "uiType='time_window' array items must be TimeWindow "
                     "(object with {min: number, max: number}). "
                     "Nested list[list[TimeWindow]] is not allowed."
                 ),
@@ -244,6 +264,110 @@ def _to_camel_case(snake_str: str) -> str:
     """Convert snake_case to camelCase."""
     parts = snake_str.split("_")
     return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
+def _path_join(path: str, part: str) -> str:
+    """Join a dotted path segment."""
+    return f"{path}.{part}" if path else part
+
+
+def _is_snake_case_key(key: str) -> bool:
+    """Return True when a JSON key uses snake_case."""
+    return bool(SNAKE_CASE_PATTERN.search(key))
+
+
+def _collect_schema_extra(field_schema: dict[str, Any]) -> dict[str, Any]:
+    """Collect UI metadata keys from merged JSON schema output."""
+    extra: dict[str, Any] = {}
+    for key, value in field_schema.items():
+        if (
+            key in CAMEL_JSON_SCHEMA_EXTRA_KEYS
+            or key in LEGACY_JSON_SCHEMA_EXTRA_KEYS
+            or key.startswith("x_")
+        ):
+            extra[key] = value
+
+    nested_extra = field_schema.get("json_schema_extra") or field_schema.get("extra")
+    if isinstance(nested_extra, dict):
+        extra.update(nested_extra)
+    return extra
+
+
+def _validate_camel_case_field_name(
+    field_name: str,
+    path: str,
+    issues: list[ValidationIssue],
+) -> None:
+    """Reject snake_case field names in generated JSON schema."""
+    if not _is_snake_case_key(field_name):
+        return
+    issues.append(
+        ValidationIssue(
+            severity=ValidationSeverity.ERROR,
+            code="INPUTSPEC_FIELD_NOT_CAMEL_CASE",
+            message=f"Schema field '{field_name}' must be camelCase",
+            path=path,
+            details={"original": field_name, "suggested": _to_camel_case(field_name)},
+        )
+    )
+
+
+def _is_time_window_dataset_field_name(field_name: str, extra: dict[str, Any]) -> bool:
+    """Allow canonical time_window dataset-bound field names like timeWindows_<datasetKey>."""
+    if extra.get("uiType") != "time_window":
+        return False
+    bind_dataset_key = extra.get("bindDatasetKey")
+    if not isinstance(bind_dataset_key, str) or not bind_dataset_key:
+        return False
+    return field_name == f"timeWindows_{bind_dataset_key}"
+
+
+def _validate_no_snake_case_keys(
+    value: Any,
+    path: str,
+    issues: list[ValidationIssue],
+    *,
+    code: str,
+    context: str,
+) -> None:
+    """Recursively reject snake_case keys in JSON payloads."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_path = _path_join(path, str(key))
+            if isinstance(key, str) and _is_snake_case_key(key):
+                issues.append(
+                    ValidationIssue(
+                        severity=ValidationSeverity.ERROR,
+                        code=code,
+                        message=f"{context} key '{key}' must be camelCase",
+                        path=child_path,
+                        details={"original": key, "suggested": _to_camel_case(key)},
+                    )
+                )
+            _validate_no_snake_case_keys(child, child_path, issues, code=code, context=context)
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            _validate_no_snake_case_keys(child, f"{path}[{idx}]", issues, code=code, context=context)
+
+
+def _append_model_validation_issues(
+    exc: PydanticValidationError,
+    issues: list[ValidationIssue],
+    *,
+    code: str,
+    message_prefix: str,
+) -> None:
+    """Convert Pydantic errors to ValidationIssue entries."""
+    for error in exc.errors():
+        loc = ".".join(str(part) for part in error.get("loc", ()))
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code=code,
+                message=f"{message_prefix}: {error['msg']}",
+                path=loc or None,
+            )
+        )
 
 
 def _resolve_ref(ref_path: str, root_schema: dict[str, Any]) -> dict[str, Any] | None:
@@ -337,7 +461,7 @@ def _resolve_field_in_schema(
 def _validate_show_when_condition(
     condition: dict[str, Any], schema: dict[str, Any], path: str, issues: list[ValidationIssue]
 ) -> None:
-    """Validate a single show_when condition.
+    """Validate a single showWhen condition.
 
     Args:
         condition: The condition dict {field, op, value}.
@@ -350,7 +474,7 @@ def _validate_show_when_condition(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_INVALID_CONDITION",
-                message="show_when condition must be a dict",
+                message="showWhen condition must be a dict",
                 path=path,
             )
         )
@@ -362,7 +486,7 @@ def _validate_show_when_condition(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_MISSING_FIELD",
-                message="show_when condition missing 'field' key",
+                message="showWhen condition missing 'field' key",
                 path=path,
             )
         )
@@ -382,7 +506,7 @@ def _validate_show_when_condition(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_SNAKE_CASE_FIELD",
-                message=f"snake_case in show_when.field causes UI breakage: '{field_path}'",
+                message=f"snake_case in showWhen.field causes UI breakage: '{field_path}'",
                 path=path,
                 details={"original": field_path, "suggested": suggested},
             )
@@ -406,7 +530,7 @@ def _validate_show_when_condition(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_INVALID_OP",
-                message=f"Invalid show_when operator: '{op}'. Valid: {sorted(CANONICAL_SHOW_WHEN_OPS)}",
+                message=f"Invalid showWhen operator: '{op}'. Valid: {sorted(CANONICAL_SHOW_WHEN_OPS)}",
                 path=path,
             )
         )
@@ -421,7 +545,7 @@ def _validate_show_when_condition(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_FIELD_NOT_FOUND",
-                message=f"show_when references non-existent field: '{field_path}'",
+                message=f"showWhen references non-existent field: '{field_path}'",
                 path=path,
                 details={"field": field_path},
             )
@@ -443,7 +567,7 @@ def _validate_show_when_condition(
                     details={"op": op, "field_type": field_type},
                 )
             )
-        if value is not None and not isinstance(value, (int, float)):
+        if value is not None and not isinstance(value, int | float):
             issues.append(
                 ValidationIssue(
                     severity=ValidationSeverity.ERROR,
@@ -454,17 +578,15 @@ def _validate_show_when_condition(
             )
 
     # Array operators require array value
-    if op in ARRAY_SHOW_WHEN_OPS:
-        if not isinstance(value, list):
-            issues.append(
-                ValidationIssue(
-                    severity=ValidationSeverity.ERROR,
-                    code="SHOW_WHEN_ARRAY_OP_VALUE_NOT_ARRAY",
-                    message=f"Array operator '{op}' requires list value, got {type(value).__name__}",
-                    path=path,
-                )
+    if op in ARRAY_SHOW_WHEN_OPS and not isinstance(value, list):
+        issues.append(
+            ValidationIssue(
+                severity=ValidationSeverity.ERROR,
+                code="SHOW_WHEN_ARRAY_OP_VALUE_NOT_ARRAY",
+                message=f"Array operator '{op}' requires list value, got {type(value).__name__}",
+                path=path,
             )
-
+        )
     # equals/not_equals on enum field: check value is in enum
     if op in ("equals", "not_equals"):
         enum_values = field_schema.get("enum")
@@ -473,7 +595,7 @@ def _validate_show_when_condition(
                 ValidationIssue(
                     severity=ValidationSeverity.ERROR,
                     code="SHOW_WHEN_VALUE_NOT_IN_ENUM",
-                    message=f"show_when value '{value}' not in enum: {enum_values}",
+                    message=f"showWhen value '{value}' not in enum: {enum_values}",
                     path=path,
                     details={"value": value, "enum": enum_values},
                 )
@@ -483,7 +605,7 @@ def _validate_show_when_condition(
 def _validate_show_when(
     show_when: Any, schema: dict[str, Any], path: str, issues: list[ValidationIssue]
 ) -> None:
-    """Validate show_when structure.
+    """Validate showWhen structure.
 
     Supports:
     - Single condition: {field, op, value}
@@ -491,7 +613,7 @@ def _validate_show_when(
     - OR object: {"or": [{cond1}, {cond2}]}
 
     Args:
-        show_when: The show_when value.
+        show_when: The showWhen value.
         schema: Full JSON schema for field lookup.
         path: Current path for error reporting.
         issues: List to append issues to.
@@ -508,7 +630,7 @@ def _validate_show_when(
                     ValidationIssue(
                         severity=ValidationSeverity.ERROR,
                         code="SHOW_WHEN_INVALID_OR",
-                        message="show_when 'or' must be a list",
+                        message="showWhen 'or' must be a list",
                         path=path,
                     )
                 )
@@ -523,7 +645,7 @@ def _validate_show_when(
                     ValidationIssue(
                         severity=ValidationSeverity.ERROR,
                         code="SHOW_WHEN_INVALID_AND",
-                        message="show_when 'and' must be a list",
+                        message="showWhen 'and' must be a list",
                         path=path,
                     )
                 )
@@ -544,7 +666,7 @@ def _validate_show_when(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="SHOW_WHEN_INVALID_TYPE",
-                message=f"show_when must be dict or list, got {type(show_when).__name__}",
+                message=f"showWhen must be dict or list, got {type(show_when).__name__}",
                 path=path,
             )
         )
@@ -556,11 +678,11 @@ def _validate_enum_labels(
     path: str,
     issues: list[ValidationIssue],
 ) -> None:
-    """Validate enum_labels keys match enum values strictly.
+    """Validate enumLabels keys match enum values strictly.
 
     Args:
         field_schema: The field's JSON schema.
-        enum_labels: The enum_labels dict from json_schema_extra.
+        enum_labels: The enumLabels dict from json_schema_extra.
         path: Current path for error reporting.
         issues: List to append issues to.
     """
@@ -571,7 +693,7 @@ def _validate_enum_labels(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="ENUM_LABELS_ON_NON_ENUM_FIELD",
-                message="enum_labels provided for non-enum field",
+                message="enumLabels provided for non-enum field",
                 path=path,
             )
         )
@@ -588,7 +710,7 @@ def _validate_enum_labels(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="ENUM_LABELS_MISSING_KEYS",
-                message=f"enum_labels missing keys for enum values: {sorted(missing)}",
+                message=f"enumLabels missing keys for enum values: {sorted(missing)}",
                 path=path,
                 details={"missing": sorted(missing)},
             )
@@ -598,7 +720,7 @@ def _validate_enum_labels(
             ValidationIssue(
                 severity=ValidationSeverity.ERROR,
                 code="ENUM_LABELS_EXTRA_KEYS",
-                message=f"enum_labels has keys not in enum: {sorted(extra)}",
+                message=f"enumLabels has keys not in enum: {sorted(extra)}",
                 path=path,
                 details={"extra": sorted(extra)},
             )
@@ -608,6 +730,7 @@ def _validate_enum_labels(
 def _validate_json_schema_extra(
     extra: dict[str, Any],
     field_schema: dict[str, Any],
+    raw_field_schema: dict[str, Any],
     full_schema: dict[str, Any],
     path: str,
     issues: list[ValidationIssue],
@@ -617,8 +740,9 @@ def _validate_json_schema_extra(
 
     Args:
         extra: The json_schema_extra dict.
-        field_schema: The field's JSON schema.
-        full_schema: The full schema for show_when validation.
+        field_schema: The resolved field JSON schema for semantic checks.
+        raw_field_schema: The original field JSON schema before anyOf/allOf unwrapping.
+        full_schema: The full schema for showWhen validation.
         path: Current path for error reporting.
         issues: List to append issues to.
         orders_in_scope: Set of order values seen in current properties scope.
@@ -631,19 +755,37 @@ def _validate_json_schema_extra(
                     severity=ValidationSeverity.WARNING,
                     code="JSON_SCHEMA_EXTRA_EXTENSION_KEY",
                     message=f"Extension key '{key}' (x_* prefix) will be ignored by SDK",
-                    path=f"{path}.{key}",
+                    path=_path_join(path, key),
+                )
+            )
+            continue
+
+        if key in LEGACY_JSON_SCHEMA_EXTRA_KEYS:
+            issues.append(
+                ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="JSON_SCHEMA_EXTRA_SNAKE_CASE_KEY",
+                    message=(
+                        f"json_schema_extra key '{key}' must use camelCase; "
+                        f"use '{LEGACY_TO_CAMEL_JSON_SCHEMA_EXTRA_KEYS[key]}'"
+                    ),
+                    path=_path_join(path, key),
+                    details={
+                        "original": key,
+                        "suggested": LEGACY_TO_CAMEL_JSON_SCHEMA_EXTRA_KEYS[key],
+                    },
                 )
             )
             continue
 
         # Unknown key (not in whitelist) → ERROR
-        if key not in ALLOWED_JSON_SCHEMA_EXTRA_KEYS:
+        if key not in CAMEL_JSON_SCHEMA_EXTRA_KEYS:
             issues.append(
                 ValidationIssue(
                     severity=ValidationSeverity.ERROR,
                     code="JSON_SCHEMA_EXTRA_UNKNOWN_KEY",
-                    message=f"Unknown json_schema_extra key: '{key}'. Allowed: {sorted(ALLOWED_JSON_SCHEMA_EXTRA_KEYS)}",
-                    path=f"{path}.{key}",
+                    message=f"Unknown json_schema_extra key: '{key}'. Allowed: {sorted(CAMEL_JSON_SCHEMA_EXTRA_KEYS)}",
+                    path=_path_join(path, key),
                 )
             )
             continue
@@ -662,22 +804,21 @@ def _validate_json_schema_extra(
                         severity=ValidationSeverity.ERROR,
                         code="JSON_SCHEMA_EXTRA_TYPE_MISMATCH",
                         message=f"json_schema_extra['{key}'] must be {expected_name}, got {type(value).__name__}",
-                        path=f"{path}.{key}",
+                        path=_path_join(path, key),
                     )
                 )
                 continue
 
         # step must be > 0
-        if key == "step":
-            if value <= 0:
-                issues.append(
-                    ValidationIssue(
-                        severity=ValidationSeverity.ERROR,
-                        code="JSON_SCHEMA_EXTRA_STEP_INVALID",
-                        message=f"step must be > 0, got {value}",
-                        path=f"{path}.step",
-                    )
+        if key == "step" and value <= 0:
+            issues.append(
+                ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="JSON_SCHEMA_EXTRA_STEP_INVALID",
+                    message=f"step must be > 0, got {value}",
+                    path=_path_join(path, "step"),
                 )
+            )
 
         # order duplicate check within same properties scope
         if key == "order":
@@ -687,67 +828,65 @@ def _validate_json_schema_extra(
                         severity=ValidationSeverity.ERROR,
                         code="JSON_SCHEMA_EXTRA_DUPLICATE_ORDER",
                         message=f"Duplicate order value {value} in same properties scope",
-                        path=f"{path}.order",
+                        path=_path_join(path, "order"),
                     )
                 )
             else:
                 orders_in_scope.add(value)
 
-        # show_when validation
-        if key == "show_when":
-            _validate_show_when(value, full_schema, f"{path}.show_when", issues)
+        # showWhen validation
+        if key == "showWhen":
+            _validate_show_when(value, full_schema, _path_join(path, "showWhen"), issues)
 
-        # enum_labels validation
-        if key == "enum_labels":
-            if isinstance(value, dict):
-                _validate_enum_labels(field_schema, value, f"{path}.enum_labels", issues)
+        # enumLabels validation
+        if key == "enumLabels" and isinstance(value, dict):
+            _validate_enum_labels(field_schema, value, _path_join(path, "enumLabels"), issues)
 
-        # window_slots validation: list[object{title?:str,note?:str}]
-        if key == "window_slots":
-            if isinstance(value, list):
-                for idx, slot in enumerate(value):
-                    slot_path = f"{path}.window_slots[{idx}]"
-                    if not isinstance(slot, dict):
+        # windowSlots validation: list[object{title?:str,note?:str}]
+        if key == "windowSlots" and isinstance(value, list):
+            for idx, slot in enumerate(value):
+                slot_path = f"{_path_join(path, 'windowSlots')}[{idx}]"
+                if not isinstance(slot, dict):
+                    issues.append(
+                        ValidationIssue(
+                            severity=ValidationSeverity.ERROR,
+                            code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_ITEM_INVALID",
+                            message="windowSlots item must be object with optional 'title'/'note'",
+                            path=slot_path,
+                        )
+                    )
+                    continue
+                for slot_key in slot:
+                    if slot_key not in {"title", "note"}:
                         issues.append(
                             ValidationIssue(
                                 severity=ValidationSeverity.ERROR,
-                                code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_ITEM_INVALID",
-                                message="window_slots item must be object with optional 'title'/'note'",
-                                path=slot_path,
+                                code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_UNKNOWN_KEY",
+                                message=f"windowSlots item unknown key '{slot_key}'",
+                                path=_path_join(slot_path, slot_key),
                             )
                         )
-                        continue
-                    for slot_key in slot.keys():
-                        if slot_key not in {"title", "note"}:
-                            issues.append(
-                                ValidationIssue(
-                                    severity=ValidationSeverity.ERROR,
-                                    code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_UNKNOWN_KEY",
-                                    message=f"window_slots item unknown key '{slot_key}'",
-                                    path=f"{slot_path}.{slot_key}",
-                                )
+                for text_key in ("title", "note"):
+                    if text_key in slot and not isinstance(slot[text_key], str):
+                        issues.append(
+                            ValidationIssue(
+                                severity=ValidationSeverity.ERROR,
+                                code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_TYPE_MISMATCH",
+                                message=f"windowSlots item '{text_key}' must be string",
+                                path=_path_join(slot_path, text_key),
                             )
-                    for text_key in ("title", "note"):
-                        if text_key in slot and not isinstance(slot[text_key], str):
-                            issues.append(
-                                ValidationIssue(
-                                    severity=ValidationSeverity.ERROR,
-                                    code="JSON_SCHEMA_EXTRA_WINDOW_SLOTS_TYPE_MISMATCH",
-                                    message=f"window_slots item '{text_key}' must be string",
-                                    path=f"{slot_path}.{text_key}",
-                                )
-                            )
+                        )
 
-        # ui_type specific validation
-        if key == "ui_type" and value == "time_window":
-            _validate_time_window_shape(field_schema, full_schema, path, issues)
-            # bind_dataset_key is required for time_window fields
-            if "bind_dataset_key" not in extra:
+        # uiType specific validation
+        if key == "uiType" and value == "time_window":
+            _validate_time_window_shape(raw_field_schema, full_schema, path, issues)
+            # bindDatasetKey is required for time_window fields
+            if "bindDatasetKey" not in extra:
                 issues.append(
                     ValidationIssue(
                         severity=ValidationSeverity.ERROR,
                         code="TIME_WINDOW_MISSING_BIND_DATASET_KEY",
-                        message="ui_type='time_window' requires 'bind_dataset_key' in json_schema_extra",
+                        message="uiType='time_window' requires 'bindDatasetKey' in json_schema_extra",
                         path=path,
                     )
                 )
@@ -791,7 +930,7 @@ import sys
 try:
     from schema.inputspec import INPUT_SPEC
     model = INPUT_SPEC
-    schema = model.model_json_schema()
+    schema = model.model_json_schema(by_alias=True)
     print(json.dumps(schema))
 except Exception as e:
     print(json.dumps({"error": str(e)}))
@@ -823,8 +962,8 @@ def validate_inputspec(workspace: Path) -> ValidationResult:
     Checks:
     - Schema can be generated
     - json_schema_extra fields are valid
-    - show_when conditions reference existing fields
-    - enum_labels keys match enum values
+    - showWhen conditions reference existing fields
+    - enumLabels keys match enum values
 
     Args:
         workspace: Algorithm workspace path.
@@ -870,6 +1009,8 @@ def _validate_schema_properties(
     full_schema: dict[str, Any],
     path_prefix: str,
     issues: list[ValidationIssue],
+    *,
+    enforce_field_name_camel_case: bool = True,
 ) -> None:
     """Recursively validate schema properties.
 
@@ -878,12 +1019,17 @@ def _validate_schema_properties(
         full_schema: The full schema for field lookups.
         path_prefix: Current path prefix for error reporting.
         issues: List to append issues to.
+        enforce_field_name_camel_case: Whether current property names must use camelCase.
     """
     properties = props_container.get("properties", {})
     orders_in_scope: set[int] = set()  # Track order values within this scope
 
     for field_name, field_schema in properties.items():
         field_path = f"{path_prefix}.{field_name}" if path_prefix else field_name
+        extra = _collect_schema_extra(field_schema)
+        if enforce_field_name_camel_case:
+            if not _is_time_window_dataset_field_name(field_name, extra):
+                _validate_camel_case_field_name(field_name, field_path, issues)
 
         # Resolve the actual field schema (handle $ref, allOf, anyOf)
         resolved_schema = field_schema
@@ -896,17 +1042,10 @@ def _validate_schema_properties(
         if "anyOf" in resolved_schema:
             resolved_schema = _unwrap_any_of(resolved_schema["anyOf"])
 
-        # Check json_schema_extra (stored in various places depending on Pydantic version)
-        extra = (
-            field_schema.get("json_schema_extra")
-            or field_schema.get("extra")
-            or {}
-        )
-
         # Validate json_schema_extra comprehensively
         if extra:
             _validate_json_schema_extra(
-                extra, resolved_schema, full_schema, field_path, issues, orders_in_scope
+                extra, resolved_schema, field_schema, full_schema, field_path, issues, orders_in_scope
             )
 
         # Validate title requirement for leaf fields
@@ -914,7 +1053,13 @@ def _validate_schema_properties(
 
         # Recurse into nested objects
         if resolved_schema.get("type") == "object" or "properties" in resolved_schema:
-            _validate_schema_properties(resolved_schema, full_schema, field_path, issues)
+            _validate_schema_properties(
+                resolved_schema,
+                full_schema,
+                field_path,
+                issues,
+                enforce_field_name_camel_case=False,
+            )
 
         # Handle allOf, anyOf, oneOf at field level
         for combiner in ["allOf", "anyOf", "oneOf"]:
@@ -922,14 +1067,22 @@ def _validate_schema_properties(
                 for i, sub_schema in enumerate(field_schema[combiner]):
                     if "properties" in sub_schema:
                         _validate_schema_properties(
-                            sub_schema, full_schema, f"{field_path}.{combiner}[{i}]", issues
+                            sub_schema,
+                            full_schema,
+                            f"{field_path}.{combiner}[{i}]",
+                            issues,
+                            enforce_field_name_camel_case=False,
                         )
 
     # Handle $defs
     if "$defs" in props_container:
         for def_name, def_schema in props_container["$defs"].items():
             _validate_schema_properties(
-                def_schema, full_schema, f"$defs.{def_name}", issues
+                def_schema,
+                full_schema,
+                f"$defs.{def_name}",
+                issues,
+                enforce_field_name_camel_case=False,
             )
 
 
@@ -943,9 +1096,9 @@ def validate_output_contract(workspace_or_path: Path) -> ValidationResult:
 
     Checks:
     - Contract can be loaded
+    - Contract JSON is camelCase-only
+    - Contract shape matches OutputContract
     - Dataset keys are unique
-    - Item keys are unique within datasets
-    - Artifact keys are unique within items
     - kind matches schema.type
 
     Args:
@@ -969,7 +1122,7 @@ def validate_output_contract(workspace_or_path: Path) -> ValidationResult:
 import json
 from schema.output_contract import OUTPUT_CONTRACT
 if hasattr(OUTPUT_CONTRACT, 'model_dump'):
-    print(json.dumps(OUTPUT_CONTRACT.model_dump(mode="json")))
+    print(json.dumps(OUTPUT_CONTRACT.model_dump(mode="json", by_alias=True)))
 else:
     print(json.dumps(OUTPUT_CONTRACT.dict()))
 '''
@@ -1007,6 +1160,24 @@ else:
 
     if "contract" not in dir():
         contract = json.loads(contract_path.read_text())
+
+    _validate_no_snake_case_keys(
+        contract,
+        "",
+        issues,
+        code="OUTPUT_CONTRACT_SNAKE_CASE_KEY",
+        context="OutputContract",
+    )
+
+    try:
+        OutputContract.model_validate(contract)
+    except PydanticValidationError as exc:
+        _append_model_validation_issues(
+            exc,
+            issues,
+            code="OUTPUT_CONTRACT_INVALID_SHAPE",
+            message_prefix="OutputContract shape invalid",
+        )
 
     # Validate contract structure
     _validate_contract_structure(contract, issues)
@@ -1533,9 +1704,8 @@ def validate_run_manifest(
 
     Checks:
     - Manifest structure is valid
+    - Manifest JSON is camelCase-only
     - All contract datasets are present in manifest
-    - All contract items are present in manifest datasets
-    - All contract artifacts are present in manifest items
     - kind/schema/mime consistency
     - dimensions key sets match
 
@@ -1571,6 +1741,24 @@ def validate_run_manifest(
         )
         return ValidationResult(valid=False, issues=issues)
 
+    _validate_no_snake_case_keys(
+        manifest,
+        "",
+        issues,
+        code="MANIFEST_SNAKE_CASE_KEY",
+        context="Run output manifest",
+    )
+
+    try:
+        RunOutputManifest.model_validate(manifest)
+    except PydanticValidationError as exc:
+        _append_model_validation_issues(
+            exc,
+            issues,
+            code="MANIFEST_INVALID_SHAPE",
+            message_prefix="Run output manifest shape invalid",
+        )
+
     # If no contract provided, just validate manifest structure
     if contract_path is None:
         has_errors = any(i.severity == ValidationSeverity.ERROR for i in issues)
@@ -1599,6 +1787,14 @@ def validate_run_manifest(
         )
         return ValidationResult(valid=False, issues=issues)
 
+    _validate_no_snake_case_keys(
+        contract,
+        "",
+        issues,
+        code="OUTPUT_CONTRACT_SNAKE_CASE_KEY",
+        context="OutputContract",
+    )
+
     # Align manifest against contract
     _validate_manifest_against_contract(manifest, contract, issues)
 
@@ -1620,7 +1816,7 @@ def _validate_manifest_against_contract(
     """
     contract_datasets = {ds["key"]: ds for ds in contract.get("datasets", []) if "key" in ds}
     manifest_datasets = {
-        ds.get("datasetKey") or ds.get("key"): ds for ds in manifest.get("datasets", [])
+        ds.get("datasetKey"): ds for ds in manifest.get("datasets", []) if ds.get("datasetKey")
     }
 
     # Check all contract datasets are in manifest (if required)
@@ -1760,16 +1956,15 @@ def _validate_item_against_contract(
     # Ensure dimension values are non-empty when present
     dims_dict = manifest_item.get("dims") or {}
     for dim_key in contract_dims:
-        if dim_key in dims_dict:
-            if dims_dict[dim_key] in (None, ""):
-                issues.append(
-                    ValidationIssue(
-                        severity=ValidationSeverity.ERROR,
-                        code="MANIFEST_DIMENSION_EMPTY",
-                        message=f"Dimension '{dim_key}' must have a non-empty value",
-                        path=f"{path}.dims.{dim_key}",
-                    )
+        if dim_key in dims_dict and dims_dict[dim_key] in (None, ""):
+            issues.append(
+                ValidationIssue(
+                    severity=ValidationSeverity.ERROR,
+                    code="MANIFEST_DIMENSION_EMPTY",
+                    message=f"Dimension '{dim_key}' must have a non-empty value",
+                    path=f"{path}.dims.{dim_key}",
                 )
+            )
 
     # Artifact check
     artifact = manifest_item.get("artifact")
@@ -1784,7 +1979,7 @@ def _validate_item_against_contract(
         )
         return
 
-    art_key = artifact.get("artifactKey") or artifact.get("key")
+    art_key = artifact.get("artifactKey")
     art_type = artifact.get("type")
     if not art_key:
         issues.append(
@@ -1884,7 +2079,7 @@ def validate_algorithm_signature(workspace: Path) -> ValidationResult:
     run_funcs = [
         node
         for node in tree.body
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "run"
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name == "run"
     ]
 
     if len(run_funcs) == 0:

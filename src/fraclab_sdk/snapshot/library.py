@@ -1,24 +1,16 @@
 """Snapshot library implementation."""
 
 import shutil
-import zipfile
 from pathlib import Path
 
 from fraclab_sdk.config import SDKConfig
-from fraclab_sdk.errors import HashMismatchError, PathTraversalError, SnapshotError
+from fraclab_sdk.errors import HashMismatchError, SnapshotError
 from fraclab_sdk.materialize.hash import compute_sha256
-from fraclab_sdk.models import BundleManifest
+from fraclab_sdk.models import DRS, BundleManifest, DataSpec
 from fraclab_sdk.snapshot.index import SnapshotIndex, SnapshotMeta
 from fraclab_sdk.snapshot.loader import SnapshotHandle
-
-
-def _is_safe_path(path: str) -> bool:
-    """Check if a path is safe (no traversal attacks)."""
-    if path.startswith("/") or path.startswith("\\"):
-        return False
-    if ".." in path:
-        return False
-    return not any(c in path for c in [":", "*", "?", '"', "<", ">", "|"])
+from fraclab_sdk.utils.path_safety import is_safe_relative_path
+from fraclab_sdk.utils.zip_import import extract_zip_and_find_root
 
 
 def _generate_snapshot_id(manifest_bytes: bytes) -> str:
@@ -69,33 +61,12 @@ class SnapshotLibrary:
 
     def _import_from_zip(self, zip_path: Path) -> str:
         """Import snapshot from zip file."""
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            tmp_path = Path(tmp_dir)
-
-            with zipfile.ZipFile(zip_path) as zf:
-                # Security check: verify all paths are safe
-                for name in zf.namelist():
-                    if not _is_safe_path(name):
-                        raise PathTraversalError(name)
-                zf.extractall(tmp_path)
-
-            # Find the actual snapshot root (may be in a subdirectory)
-            snapshot_root = self._find_snapshot_root(tmp_path)
-            return self._import_from_dir(snapshot_root)
-
-    def _find_snapshot_root(self, path: Path) -> Path:
-        """Find the snapshot root directory (contains manifest.json)."""
-        if (path / "manifest.json").exists():
-            return path
-
-        # Check one level of subdirectories
-        for subdir in path.iterdir():
-            if subdir.is_dir() and (subdir / "manifest.json").exists():
-                return subdir
-
-        raise SnapshotError(f"No manifest.json found in {path}")
+        try:
+            root, tmp_dir = extract_zip_and_find_root(zip_path)
+        except FileNotFoundError as exc:
+            raise SnapshotError(str(exc)) from exc
+        with tmp_dir:
+            return self._import_from_dir(root)
 
     def _import_from_dir(self, source_dir: Path) -> str:
         """Import snapshot from directory."""
@@ -107,6 +78,15 @@ class SnapshotLibrary:
         # Parse manifest and get file paths
         manifest_bytes = manifest_path.read_bytes()
         manifest = BundleManifest.model_validate_json(manifest_bytes.decode())
+
+        manifest_paths = [
+            ("specFiles.dsPath", manifest.specFiles.dsPath),
+            ("specFiles.drsPath", manifest.specFiles.drsPath),
+            ("dataRoot", manifest.dataRoot),
+        ]
+        for field_name, rel_path in manifest_paths:
+            if not is_safe_relative_path(rel_path):
+                raise SnapshotError(f"Unsafe manifest path {field_name}: {rel_path}")
 
         ds_path = source_dir / manifest.specFiles.dsPath
         drs_path = source_dir / manifest.specFiles.drsPath
@@ -136,6 +116,14 @@ class SnapshotLibrary:
             raise HashMismatchError(
                 manifest.specFiles.drsPath, manifest.specFiles.drsSha256, drs_hash
             )
+
+        try:
+            DataSpec.model_validate_json(ds_bytes.decode())
+            DRS.model_validate_json(drs_bytes.decode())
+        except Exception as e:
+            raise SnapshotError(
+                f"Bundle ds.json or drs.json does not match camelCase SDK spec: {e}"
+            ) from e
 
         # Generate snapshot_id from manifest hash
         snapshot_id = _generate_snapshot_id(manifest_bytes)

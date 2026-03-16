@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 
 def _has_streamlit_flag(args: Sequence[str], flag_name: str) -> bool:
@@ -53,6 +53,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         extra_args.extend(["--server.maxUploadSize", str(default_upload_mb)])
     if not _has_streamlit_flag(extra_args, "--server.maxMessageSize"):
         extra_args.extend(["--server.maxMessageSize", str(default_message_mb)])
+    if not _has_streamlit_flag(extra_args, "--client.showSidebarNavigation"):
+        extra_args.extend(["--client.showSidebarNavigation", "false"])
 
     sys.argv = ["streamlit", "run", str(home_path), *extra_args]
     os.chdir(workbench_dir)
