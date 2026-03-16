@@ -47,8 +47,8 @@ class SelectionModel:
         if not drs.datasets:
             inferred = [
                 DRSDataset(
-                    datasetKey=ds.datasetKey,
-                    resourceType=ds.resourceType,
+                    key=ds.key,
+                    resource=ds.resource,
                     cardinality="many",
                     description=ds.layout,
                 )
@@ -62,13 +62,13 @@ class SelectionModel:
         # Validate that all DRS dataset keys exist in snapshot
         snapshot_keys = set(snapshot.dataspec.get_dataset_keys())
         for drs_dataset in self._drs.datasets:
-            if drs_dataset.datasetKey not in snapshot_keys:
+            if drs_dataset.key not in snapshot_keys:
                 raise DatasetKeyError(
-                    dataset_key=drs_dataset.datasetKey,
+                    dataset_key=drs_dataset.key,
                     available_keys=list(snapshot_keys),
                 )
             # Initialize empty selection
-            self._selections[drs_dataset.datasetKey] = []
+            self._selections[drs_dataset.key] = []
 
     @classmethod
     def from_snapshot_and_drs(
@@ -95,14 +95,14 @@ class SelectionModel:
         """
         result = []
         for drs_dataset in self._drs.datasets:
-            snapshot_dataset = self._snapshot.dataspec.get_dataset(drs_dataset.datasetKey)
+            snapshot_dataset = self._snapshot.dataspec.get_dataset(drs_dataset.key)
             if snapshot_dataset:
                 result.append(
                     SelectableDataset(
-                        dataset_key=drs_dataset.datasetKey,
+                        dataset_key=drs_dataset.key,
                         cardinality=drs_dataset.cardinality,
                         total_items=len(snapshot_dataset.items),
-                        resource_type=drs_dataset.resourceType,
+                        resource_type=drs_dataset.resource,
                         description=drs_dataset.description,
                     )
                 )
@@ -159,9 +159,9 @@ class SelectionModel:
         """
         errors = []
         for drs_dataset in self._drs.datasets:
-            selected = self._selections.get(drs_dataset.datasetKey, [])
+            selected = self._selections.get(drs_dataset.key, [])
             error = validate_cardinality(
-                dataset_key=drs_dataset.datasetKey,
+                dataset_key=drs_dataset.key,
                 cardinality=drs_dataset.cardinality,
                 selected_count=len(selected),
             )
@@ -207,11 +207,11 @@ class SelectionModel:
         datasets = []
 
         for drs_dataset in self._drs.datasets:
-            snapshot_dataset = self._snapshot.dataspec.get_dataset(drs_dataset.datasetKey)
+            snapshot_dataset = self._snapshot.dataspec.get_dataset(drs_dataset.key)
             if not snapshot_dataset:
                 continue
 
-            selected_indices = self._selections.get(drs_dataset.datasetKey, [])
+            selected_indices = self._selections.get(drs_dataset.key, [])
 
             # Build re-indexed items
             items = []
@@ -229,9 +229,9 @@ class SelectionModel:
 
             datasets.append(
                 DataSpecDataset(
-                    datasetKey=snapshot_dataset.datasetKey,
-                    resourceType=snapshot_dataset.resourceType,
-                    layout=self._infer_layout(snapshot_dataset.datasetKey),
+                    key=snapshot_dataset.key,
+                    resource=snapshot_dataset.resource,
+                    layout=self._infer_layout(snapshot_dataset.key),
                     items=items,
                 )
             )

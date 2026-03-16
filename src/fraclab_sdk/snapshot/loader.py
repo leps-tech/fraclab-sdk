@@ -94,12 +94,12 @@ class SnapshotHandle:
         """Get list of datasets with metadata.
 
         Returns:
-            List of dicts with datasetKey, resourceType, layout, itemCount.
+            List of dicts with key, resource, layout, itemCount.
         """
         return [
             {
-                "datasetKey": ds.datasetKey,
-                "resourceType": ds.resourceType,
+                "key": ds.key,
+                "resource": ds.resource,
                 "layout": ds.layout,
                 "itemCount": len(ds.items),
             }

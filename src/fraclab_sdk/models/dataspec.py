@@ -31,8 +31,8 @@ class DataSpecDataset(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    datasetKey: str
-    resourceType: str | None = None
+    key: str
+    resource: str | None = None
     layout: str | None = None  # e.g., "frame_parquet_item_dirs" or "object_ndjson_lines"
     items: list[DataSpecItem] = Field(default_factory=list)
 
@@ -48,18 +48,18 @@ class DataSpec(BaseModel):
     @field_validator("datasets", mode="before")
     @classmethod
     def _coerce_datasets(cls, v):
-        """Accept mapping form {'datasetKey': {...}} by converting to list."""
+        """Accept mapping form {'key': {...}} by converting to list."""
         if isinstance(v, dict):
-            return [{"datasetKey": k, **(val or {})} for k, val in v.items()]
+            return [{"key": k, **(val or {})} for k, val in v.items()]
         return v
 
     def get_dataset(self, dataset_key: str) -> DataSpecDataset | None:
         """Get a dataset by key."""
         for ds in self.datasets:
-            if ds.datasetKey == dataset_key:
+            if ds.key == dataset_key:
                 return ds
         return None
 
     def get_dataset_keys(self) -> list[str]:
         """Get all dataset keys."""
-        return [ds.datasetKey for ds in self.datasets]
+        return [ds.key for ds in self.datasets]

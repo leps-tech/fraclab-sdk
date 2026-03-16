@@ -753,7 +753,7 @@ def _render_parquet_item_files(snapshot_id: str, snapshot, dataset_key: str, ite
 
 def render_dataset_panel(snapshot_id: str, snapshot, dataset_info: dict[str, Any]) -> None:
     """Render explorer and file preview for a single dataset."""
-    dataset_key = dataset_info["datasetKey"]
+    dataset_key = dataset_info["key"]
     layout = dataset_info["layout"]
     manifest = snapshot.manifest
     manifest_ds = manifest.datasets.get(dataset_key)
@@ -933,7 +933,7 @@ if not datasets:
     st.info(tx("No datasets in this snapshot", "该快照没有数据集。"))
     st.stop()
 
-dataset_options = {d["datasetKey"]: d for d in datasets}
+dataset_options = {d["key"]: d for d in datasets}
 dataset_keys = list(dataset_options.keys())
 saved_snapshot_state = _get_browse_snapshot_state(selected_id)
 default_dataset_key = choose_valid_option(

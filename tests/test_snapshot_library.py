@@ -78,11 +78,16 @@ def test_snapshot_handle_rejects_unsafe_manifest_paths_on_access(tmp_path: Path)
 def test_import_snapshot_does_not_validate_ds_or_drs_shape(tmp_path: Path) -> None:
     source_dir = _write_snapshot_source(
         tmp_path,
-        ds_payload={"datasets": [{"key": "legacy_dataset"}]},
-        drs_payload={"datasets": [{"resource": "legacy_resource"}]},
+        ds_payload={"datasets": [{"key": "legacy_dataset", "resource": "legacy_resource"}]},
+        drs_payload={"datasets": [{"key": "legacy_dataset", "resource": "legacy_resource"}]},
     )
     snapshot_lib = SnapshotLibrary(SDKConfig(tmp_path / "sdk-home"))
 
     snapshot_id = snapshot_lib.import_snapshot(source_dir)
 
     assert snapshot_id
+    snapshot = snapshot_lib.get_snapshot(snapshot_id)
+    assert snapshot.dataspec.datasets[0].key == "legacy_dataset"
+    assert snapshot.dataspec.datasets[0].resource == "legacy_resource"
+    assert snapshot.drs.datasets[0].key == "legacy_dataset"
+    assert snapshot.drs.datasets[0].resource == "legacy_resource"

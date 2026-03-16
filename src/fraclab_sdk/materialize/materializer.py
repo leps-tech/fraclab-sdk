@@ -83,7 +83,7 @@ class Materializer:
         # Build datasets entry for manifest
         datasets_manifest: dict[str, dict] = {}
         for dataset in run_ds.datasets:
-            datasets_manifest[dataset.datasetKey] = {
+            datasets_manifest[dataset.key] = {
                 "layout": dataset.layout,
                 "count": len(dataset.items),
             }
@@ -144,7 +144,7 @@ class Materializer:
         copy_stats: dict[str, dict[str, int]] = {}
 
         for dataset in run_ds.datasets:
-            dataset_key = dataset.datasetKey
+            dataset_key = dataset.key
             layout = dataset.layout
 
             if layout == "frame_parquet_item_dirs":

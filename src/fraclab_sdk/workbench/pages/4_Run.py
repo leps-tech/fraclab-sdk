@@ -435,7 +435,7 @@ def _build_datasets_config(
     config: dict[str, Any] = {}
     for dataset in ds.datasets:
         items_cfg: dict[str, Any] = {}
-        data_base = run_dir / "input" / "data" / dataset.datasetKey / "parquet"
+        data_base = run_dir / "input" / "data" / dataset.key / "parquet"
         total = len(dataset.items)
         width = max(2, len(str(max(total - 1, 0))))
 
@@ -465,7 +465,7 @@ def _build_datasets_config(
                 "x_step": x_step,
             }
 
-        config[dataset.datasetKey] = {
+        config[dataset.key] = {
             "items": items_cfg,
             "items_with_windows": [],
             "items_scope": item_scope,
@@ -675,7 +675,7 @@ def render_schema_grid(
                 if isinstance(run_dir_str, str) and run_dir_str.strip():
                     run_ds = _load_run_ds(Path(run_dir_str))
                     if run_ds is not None:
-                        run_dataset_keys = [str(ds.datasetKey) for ds in run_ds.datasets]
+                        run_dataset_keys = [str(ds.key) for ds in run_ds.datasets]
 
                 if not run_dataset_keys:
                     st.error(tx("Cannot resolve selected datasets from current run (input/ds.json missing or invalid).", "无法从当前运行中解析已选数据集（input/ds.json 缺失或无效）。"))
