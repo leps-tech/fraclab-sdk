@@ -49,7 +49,7 @@ def test_get_language_reads_persisted_language_on_fresh_session(monkeypatch) -> 
     monkeypatch.setattr(i18n, "write_global_setting", lambda key, value, config=None: writes.append(value))
 
     assert i18n.get_language() == "en"
-    assert i18n.st.session_state[i18n._LANGUAGE_SELECT_KEY] == "en"  # type: ignore[attr-defined]
+    assert i18n.st.session_state[i18n._LANGUAGE_SESSION_KEY] == "en"  # type: ignore[attr-defined]
     assert writes == []
 
 
@@ -64,3 +64,34 @@ def test_page_titles_use_refined_chinese_labels(monkeypatch) -> None:
     assert i18n.page_title("schema_edit") == "输入参数编辑"
     assert i18n.page_title("output_edit") == "输出结果定义"
     assert i18n.page_title("selection") == "运行配置"
+
+
+def test_apply_selected_language_updates_session_and_persistence(monkeypatch) -> None:
+    monkeypatch.setattr(i18n.st, "session_state", {i18n._LANGUAGE_SELECT_KEY: "en"})  # type: ignore[attr-defined]
+    writes: list[str] = []
+    monkeypatch.setattr(i18n, "write_global_setting", lambda key, value, config=None: writes.append(value))
+
+    i18n._apply_selected_language()  # type: ignore[attr-defined]
+
+    assert i18n.st.session_state[i18n._LANGUAGE_SESSION_KEY] == "en"  # type: ignore[attr-defined]
+    assert writes == ["en"]
+
+
+def test_render_language_toolbar_relies_on_session_state_instead_of_index(monkeypatch) -> None:
+    session_state: dict[str, str] = {}
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(i18n.st, "session_state", session_state)  # type: ignore[attr-defined]
+    monkeypatch.setattr(i18n, "get_language", lambda: "zh-CN")
+
+    def fake_selectbox(*args, **kwargs):
+        captured.update(kwargs)
+        return "zh-CN"
+
+    monkeypatch.setattr(i18n.st, "selectbox", fake_selectbox)
+
+    i18n.render_language_toolbar()
+
+    assert session_state[i18n._LANGUAGE_SELECT_KEY] == "zh-CN"  # type: ignore[attr-defined]
+    assert "index" not in captured
+    assert captured["on_change"] == i18n._apply_selected_language  # type: ignore[attr-defined]

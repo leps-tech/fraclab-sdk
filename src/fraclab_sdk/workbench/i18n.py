@@ -86,22 +86,31 @@ def _persist_language(lang: LanguageCode) -> None:
     st.session_state[_LANGUAGE_PERSISTED_CACHE_KEY] = lang
 
 
+def _apply_selected_language() -> None:
+    """Sync the language widget selection into global workbench state."""
+    selected_lang = st.session_state.get(_LANGUAGE_SELECT_KEY)
+    if selected_lang not in _SUPPORTED_LANGUAGES:
+        return
+    st.session_state[_LANGUAGE_SESSION_KEY] = selected_lang
+    _persist_language(selected_lang)
+
+
 def get_language() -> LanguageCode:
     """Return the current UI language."""
+    lang = st.session_state.get(_LANGUAGE_SESSION_KEY)
+    if lang in _SUPPORTED_LANGUAGES:
+        return lang
+
     selected_lang = st.session_state.get(_LANGUAGE_SELECT_KEY)
     if selected_lang in _SUPPORTED_LANGUAGES:
         st.session_state[_LANGUAGE_SESSION_KEY] = selected_lang
         _persist_language(selected_lang)
         return selected_lang
 
-    lang = st.session_state.get(_LANGUAGE_SESSION_KEY)
-    if lang not in _SUPPORTED_LANGUAGES:
-        lang = _read_persisted_language() or _default_language()
-        st.session_state[_LANGUAGE_SESSION_KEY] = lang
-        _persist_language(lang)
-    if st.session_state.get(_LANGUAGE_SELECT_KEY) not in _SUPPORTED_LANGUAGES:
-        st.session_state[_LANGUAGE_SELECT_KEY] = lang
-    return lang
+    resolved_lang = _read_persisted_language() or _default_language()
+    st.session_state[_LANGUAGE_SESSION_KEY] = resolved_lang
+    _persist_language(resolved_lang)
+    return resolved_lang
 
 
 def tx(en: str, zh: str, **kwargs: object) -> str:
@@ -140,16 +149,17 @@ def _language_option_label(code: LanguageCode) -> str:
 def render_language_toolbar() -> None:
     """Render the page-level language switcher."""
     current_lang = get_language()
-    selected_lang = st.selectbox(
+    if st.session_state.get(_LANGUAGE_SELECT_KEY) not in _SUPPORTED_LANGUAGES:
+        st.session_state[_LANGUAGE_SELECT_KEY] = current_lang
+    st.selectbox(
         tx("Language", "语言"),
         options=list(_SUPPORTED_LANGUAGES),
-        index=_SUPPORTED_LANGUAGES.index(current_lang),
         format_func=_language_option_label,
         key=_LANGUAGE_SELECT_KEY,
+        on_change=_apply_selected_language,
         label_visibility="collapsed",
         help=tx("Switch UI language", "切换界面语言"),
     )
-    st.session_state[_LANGUAGE_SESSION_KEY] = selected_lang
 
 
 def render_sidebar_navigation(current_page: str | None = None) -> None:

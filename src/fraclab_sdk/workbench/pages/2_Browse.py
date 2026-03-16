@@ -950,7 +950,6 @@ selected_dataset_key = st.pills(
     tx("Select dataset", "选择数据集"),
     options=dataset_keys,
     format_func=lambda key: f"{key} ({dataset_options[key]['itemCount']})",
-    default=default_dataset_key,
     key="browse_dataset_key",
     width="stretch",
 )

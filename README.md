@@ -1,6 +1,6 @@
 # Fraclab SDK Reference
 
-> 版本: 0.1.63
+> 版本: 0.1.64
 > Python: >=3.11
 
 Fraclab SDK 是一个算法开发与执行框架，帮助算法开发者快速构建、测试和部署数据处理算法。
@@ -189,11 +189,11 @@ fraclab-sdk validate bundle /path/to/bundle
 算法开发者主要使用 `fraclab_sdk.runtime` 模块中的两个核心类：
 
 ```python
-from fraclab_sdk.runtime import DataClient, ArtifactWriter
+from fraclab_sdk.runtime import DataClient, OutputClient
 ```
 
 - **DataClient**: 读取输入数据
-- **ArtifactWriter**: 写入输出结果
+- **OutputClient**: 写入输出结果
 
 #### 入口签名与模板
 
@@ -238,7 +238,7 @@ def run(ctx):
         ctx: RunContext，包含:
             - ctx.data_client: DataClient 实例
             - ctx.params: dict[str, Any]，用户参数
-            - ctx.artifacts: ArtifactWriter 实例
+            - ctx.output: OutputClient 实例
             - ctx.logger: logging.Logger 实例
             - ctx.run_context: dict，运行上下文
     """
@@ -261,12 +261,12 @@ def run(ctx):
         ctx: RunContext，包含:
             - ctx.data_client: DataClient 实例
             - ctx.params: dict，用户参数
-            - ctx.artifacts: ArtifactWriter 实例
+            - ctx.output: OutputClient 实例
             - ctx.logger: Logger 实例
             - ctx.run_context: dict，运行上下文
     """
     dc = ctx.data_client
-    aw = ctx.artifacts
+    out = ctx.output
     params = ctx.params
     logger = ctx.logger
 
@@ -287,7 +287,7 @@ def run(ctx):
             result = process(obj, threshold)
 
             # 写入结果
-            aw.write_scalar(f"{dataset_key}_result_{i}", result)
+            out.write_scalar(f"{dataset_key}_result_{i}", result)
 
     # ⚠️ 注意: 若需要匹配时间窗的 itemKey，不能用 range(count) 遍历。
     # timeWindows 中的 itemKey 是选择器输出的标识，可能是稀疏集合（如 00/04/05），
@@ -302,7 +302,9 @@ def run(ctx):
             logger.info(f"  item={item_key} window=[{t_min}, {t_max}]")
 
     # 写入汇总结果
-    aw.write_json("summary", {"status": "completed", "threshold": threshold})
+    out.write_json("summary", {"status": "completed", "threshold": threshold})
+
+    # output/manifest.json 由 SDK 自动生成，算法代码不要手写或修改 manifest。
 
     logger.info("算法执行完成")
 
@@ -355,14 +357,15 @@ def run(ctx):
 
 #### 全局 JSON 命名规则
 
-SDK 中所有 JSON 文件（`params.schema.json`、`output_contract.json`、`ds.json`、`drs.json`、运行输出 `manifest.json`）统一使用 **camelCase** 键名。编译和验证阶段会严格拒绝 snake_case 键名。
+算法作者直接编写或直接使用的 JSON，统一使用 **camelCase**。  
+Bundle 自带的 `ds.json` / `drs.json` 跟随 Bundle 规范，保持平台原始格式，不适用这里的 camelCase 规则。
 
 | 文件 | 命名风格 | 说明 |
 |------|---------|------|
 | **params.schema.json** | `camelCase` | InputSpec 生成的 JSON Schema，字段名必须 camelCase |
 | **output_contract.json** | `camelCase` | 输出合约，所有键递归检查 camelCase |
-| **ds.json** | `camelCase` | 数据规格，字段如 `datasetKey`、`resourceType` |
-| **drs.json** | `camelCase` | 数据需求规格，字段如 `datasetKey`、`resourceType` |
+| **ds.json** | Bundle 原始格式 | 数据规格，由平台提供，字段如 `key`、`resource` |
+| **drs.json** | Bundle 原始格式 | 数据需求规格，由平台提供，字段如 `key`、`resource` |
 | **运行输出 manifest.json** | `camelCase` | 运行结果清单，所有键递归检查 camelCase |
 | **算法访问 ctx.params** | `camelCase` | dict 访问，键名与 JSON 一致 |
 
@@ -504,7 +507,7 @@ class INPUT_SPEC(CamelModel):
 - 可以定义多个时间窗字段，但 Run 页面只渲染一个统一选择器。
 - 统一选择器内部切换 dataset，并自动使用对应 `bindDatasetKey` 字段的约束和备注。
 - 每个 `bindDatasetKey` 只能对应一个时间窗字段（重复绑定会报错）。
-- `bindDatasetKey` 必须与该算法 DRS（`dist/drs.json`）中的 `datasets[*].datasetKey` 一致；不一致会导致运行期无法绑定到 selector items。
+- `bindDatasetKey` 必须与该算法 DRS（`dist/drs.json`）中的 `datasets[*].key` 一致；不一致会导致运行期无法绑定到 selector items。
 - `time_window_list()` 返回值已内置 `Optional[list[TimeWindow]]`，调用方不要写成 `Optional[time_window_list(...)]`（会产生双重 Optional schema，增加 UI/校验歧义）。
 
 > **已知 lint warning**: `time_window_list()` 生成的 `TimeWindow` 子字段（`min`/`max`/`itemKey`）在
@@ -657,9 +660,9 @@ OUTPUT_CONTRACT = OutputContract(
 | `role` | 否 | `Literal` | `"primary"` / `"supporting"` / `"debug"` | 输出角色 |
 | `description` | 否 | `str` | — | 描述说明 |
 
-#### kind 与 ArtifactWriter 方法对应
+#### kind 与 OutputClient 方法对应
 
-| kind | ArtifactWriter 方法 | 说明 |
+| kind | OutputClient 方法 | 说明 |
 |------|---------------------|------|
 | `"scalar"` | `write_scalar()` | 标量值 (数字/字符串/布尔) |
 | `"object"` | `write_json()` | JSON 对象 |
@@ -668,7 +671,7 @@ OUTPUT_CONTRACT = OutputContract(
 
 #### owner 级别说明
 
-| owner | 含义 | ArtifactWriter owner 参数 |
+| owner | 含义 | OutputClient owner 参数 |
 |-------|------|--------------------------|
 | `"platform"` | 平台级 (全局) | `owner={"platformId": "..."}` |
 | `"well"` | 井级 | `owner={"wellId": "..."}` |
@@ -687,7 +690,7 @@ OUTPUT_CONTRACT = OutputContract(
 
 ```python
 # OutputContract 定义: dimensions=["stage", "iteration"]
-aw.write_scalar(
+out.write_scalar(
     "loss",
     0.05,
     dataset_key="training_metrics",
@@ -725,7 +728,7 @@ aw.write_scalar(
     "drsPath": "dist/drs.json"
   },
   "requires": {
-    "sdk": "0.1.63",
+    "sdk": "0.1.64",
     "core": "1.0.0"
   },
   "repository": "https://github.com/example/my-algorithm",
@@ -1036,27 +1039,48 @@ df = pd.read_parquet(parquet_dir)
 > 若选择器选择了稀疏 item（如 00/04/05 而非 00/01/02），算法应按 `itemKey` 定位
 > 对应的 `item-00000/`、`item-00004/`、`item-00005/` 目录，**不可假设 item 连续**。
 
-### ArtifactWriter - 写入输出结果
+### OutputClient - 写入输出结果
 
-`ArtifactWriter` 提供安全的输出写入机制，自动防止路径逃逸攻击。
+`OutputClient` 提供统一的算法输出入口，固定根目录为 `run/output/artifacts`，并自动防止路径逃逸攻击。  
+算法代码里始终使用运行时注入的 `ctx.output`，不要自己实例化 `OutputClient`，也不要手写或修改 `manifest.json`。
+
+- `ctx.output.dir`: 运行时已经准备好的唯一可写输出目录。服务器侧只保证这个固定目录可写，不要在算法里创建子目录。
+- `write_*()`: 写入并显式登记结果，适合需要自定义 `dataset_key / item_key / owner / dims / meta` 的输出。
+- 直接写到 `ctx.output.dir` 下、但未显式登记的文件，也会在 runner 结束时自动纳入 `output/manifest.json`，默认归到 `artifacts` 数据集。
+
+#### 最常用写法
 
 ```python
-from fraclab_sdk.runtime import ArtifactWriter
-from pathlib import Path
+def run(ctx):
+    out = ctx.output
 
-aw = ArtifactWriter(Path("output"))
+    out.write_scalar("score", 0.95)
+    out.write_json("summary", {"status": "ok"})
+
+    plot_path = out.dir / "result_plot.png"
+    fig.savefig(plot_path, dpi=200)
+    # 这个 PNG 会在运行结束后被 SDK 自动收进 output/manifest.json
+
+    report_path = out.dir / "report.csv"
+    df.to_csv(report_path, index=False)
+    out.register_file(
+        "report",
+        report_path,
+        mime_type="text/csv",
+        dataset_key="reports",
+    )
 ```
 
 #### 写入标量值
 
 ```python
 # 基本用法
-aw.write_scalar("score", 0.95)
-aw.write_scalar("count", 42)
-aw.write_scalar("name", "result_a")
+out.write_scalar("score", 0.95)
+out.write_scalar("count", 42)
+out.write_scalar("name", "result_a")
 
 # 指定数据集和所有者
-aw.write_scalar(
+out.write_scalar(
     "accuracy",
     0.87,
     dataset_key="metrics",
@@ -1070,13 +1094,13 @@ aw.write_scalar(
 
 ```python
 # 基本用法
-path = aw.write_json("metrics", {"accuracy": 0.95, "loss": 0.05})
+path = out.write_json("metrics", {"accuracy": 0.95, "loss": 0.05})
 
 # 自定义文件名
-path = aw.write_json("results", data, filename="analysis_results.json")
+path = out.write_json("results", data, filename="analysis_results.json")
 
 # 完整参数
-path = aw.write_json(
+path = out.write_json(
     "summary",
     {"status": "ok"},
     filename="summary.json",
@@ -1090,7 +1114,7 @@ path = aw.write_json(
 ```python
 # 写入字节数据
 image_bytes = generate_plot()
-path = aw.write_blob(
+path = out.write_blob(
     "plot",
     image_bytes,
     "plot.png",
@@ -1098,7 +1122,7 @@ path = aw.write_blob(
 )
 
 # 复制现有文件
-path = aw.write_file(
+path = out.write_file(
     "report",
     Path("/tmp/generated_report.pdf"),
     filename="report.pdf",
@@ -1106,13 +1130,14 @@ path = aw.write_file(
 )
 ```
 
-### ArtifactWriter 与 OutputContract/Manifest 映射关系
+### 系统自动生成的 Output Manifest 参考
 
-ArtifactWriter 的写入操作会自动生成 `output/manifest.json`，理解参数与输出的映射关系是正确使用的关键。
+`output/manifest.json` 由 SDK 在 `run(ctx)` 完成后自动生成。  
+下面这部分只是帮助你理解 `ctx.output.write_*()` 如何映射到结果清单，不是让你在算法里手写 manifest。
 
 #### 参数映射表
 
-| ArtifactWriter 参数 | manifest.json 字段 | OutputContract 字段 | 说明 |
+| OutputClient 参数 | manifest.json 字段 | OutputContract 字段 | 说明 |
 |---------------------|-------------------|---------------------|------|
 | `artifact_key` | `artifact.artifactKey` | - | 制品唯一标识 |
 | `dataset_key` | `datasetKey` | `datasets[].key` | 数据集键，默认 `"artifacts"` |
@@ -1126,7 +1151,7 @@ ArtifactWriter 的写入操作会自动生成 `output/manifest.json`，理解参
 
 ```python
 # 算法代码中的写入
-aw.write_scalar(
+out.write_scalar(
     "accuracy",           # artifact_key
     0.95,                 # value
     dataset_key="metrics",
@@ -1136,7 +1161,7 @@ aw.write_scalar(
 )
 ```
 
-生成的 `output/manifest.json` 片段:
+SDK 自动生成的 `output/manifest.json` 片段:
 
 ```json
 {
@@ -1170,7 +1195,7 @@ aw.write_scalar(
 | `write_blob()` | `"blob"` | `"blob"` | 二进制文件 (存 uri + mimeType) |
 | `write_file()` | `"blob"` | `"blob"` | 复制文件 (存 uri + mimeType) |
 
-#### OutputContract 定义与 ArtifactWriter 使用示例
+#### OutputContract 定义与 OutputClient 使用示例
 
 **OutputContract 定义** (`schema/output_contract.py`):
 
@@ -1207,12 +1232,12 @@ OUTPUT_CONTRACT = OutputContract(
 
 ```python
 def run(ctx):
-    aw = ctx.artifacts
+    out = ctx.output
 
     # 符合 "metrics" 数据集定义
     # owner="well" → 必须提供 wellId
     # dimensions=["stage"] → dims 必须包含 stage 键
-    aw.write_scalar(
+    out.write_scalar(
         "accuracy",
         0.95,
         dataset_key="metrics",
@@ -1222,7 +1247,7 @@ def run(ctx):
 
     # 符合 "reports" 数据集定义
     # cardinality="one" → 该数据集只能有一个项目
-    aw.write_file(
+    out.write_file(
         "report",
         Path("/tmp/report.pdf"),
         dataset_key="reports",
@@ -2001,14 +2026,14 @@ Parquet 预览会自动识别时间列（优先级：`timestamp` > `bucket` > `t
 # main.py
 def run(ctx):
     dc = ctx.data_client
-    aw = ctx.artifacts
+    out = ctx.output
 
     for key in dc.get_dataset_keys():
         for idx, obj in dc.iterate_objects(key):
             result = analyze(obj)
-            aw.write_scalar(f"result_{key}_{idx}", result)
+            out.write_scalar(f"result_{key}_{idx}", result)
 
-    aw.write_json("summary", {"completed": True})
+    out.write_json("summary", {"completed": True})
 
 # 2. 定义规格
 # schema/inputspec.py
@@ -2117,7 +2142,7 @@ my-bundle/
 | `specFiles.dsSha256` | 是 | ds.json 的 SHA256 哈希 |
 | `specFiles.drsSha256` | 是 | drs.json 的 SHA256 哈希 |
 | `dataRoot` | 是 | 数据目录相对路径，默认 `"data"` |
-| `datasets` | 是 | 数据集清单，key 为 datasetKey |
+| `datasets` | 是 | 数据集清单，key 为数据集标识 |
 | `datasets.*.layout` | 是 | `"object_ndjson_lines"` 或 `"frame_parquet_item_dirs"` |
 | `datasets.*.count` | 是 | 数据集中的项目数量 |
 
@@ -2128,8 +2153,8 @@ my-bundle/
   "schemaVersion": "1.0.0",
   "datasets": [
     {
-      "datasetKey": "wells",
-      "resourceType": "well",
+      "key": "wells",
+      "resource": "well",
       "layout": "object_ndjson_lines",
       "items": [
         { "owner": { "wellId": "W001" } },
@@ -2145,8 +2170,8 @@ my-bundle/
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `datasets[].datasetKey` | 是 | 数据集键名，对应 data/ 下的目录名 |
-| `datasets[].resourceType` | 否 | 资源类型标识 |
+| `datasets[].key` | 是 | 数据集键名，对应 `data/` 下的目录名 |
+| `datasets[].resource` | 否 | 资源类型标识 |
 | `datasets[].layout` | 否 | 数据布局，决定数据存储格式 |
 | `datasets[].items` | 否 | 项目列表，每个元素对应一条数据 |
 | `datasets[].items[].owner` | 否 | 所有者标识，包含 platformId/wellId/stageId |
@@ -2158,8 +2183,8 @@ my-bundle/
   "schemaVersion": "1.0.0",
   "datasets": [
     {
-      "datasetKey": "wells",
-      "resourceType": "well",
+      "key": "wells",
+      "resource": "well",
       "cardinality": "many",
       "description": "井数据集"
     }
@@ -2171,8 +2196,8 @@ my-bundle/
 
 | 字段 | 必填 | 说明 |
 |------|------|------|
-| `datasets[].datasetKey` | 是 | 数据集键名，必须与 ds.json 中的 datasetKey 匹配 |
-| `datasets[].resourceType` | 否 | 资源类型标识 |
+| `datasets[].key` | 是 | 数据集键名，必须与 ds.json 中的 `datasets[].key` 匹配 |
+| `datasets[].resource` | 否 | 资源类型标识 |
 | `datasets[].cardinality` | 是 | 基数要求: `"one"` / `"many"` / `"zeroOrMany"` |
 | `datasets[].description` | 否 | 数据集描述 |
 

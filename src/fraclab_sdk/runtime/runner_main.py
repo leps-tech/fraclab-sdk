@@ -12,9 +12,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fraclab_sdk.runtime.artifacts import ArtifactWriter
 from fraclab_sdk.runtime.data_client import DataClient
 from fraclab_sdk.runtime.fonts import configure_matplotlib_runtime_fonts
+from fraclab_sdk.runtime.output import OutputClient
 
 
 def validate_manifest_against_contract(
@@ -95,7 +95,7 @@ class RunContext:
 
     data_client: DataClient
     params: dict[str, Any]
-    artifacts: ArtifactWriter
+    output: OutputClient
     logger: logging.Logger
     run_context: dict[str, Any]
 
@@ -197,12 +197,12 @@ def run_algorithm(run_dir: Path, algorithm_path: Path) -> int:
 
         # Create context components
         data_client = DataClient(input_dir)
-        artifacts = ArtifactWriter(output_dir)
+        output = OutputClient(output_dir)
 
         ctx = RunContext(
             data_client=data_client,
             params=params,
-            artifacts=artifacts,
+            output=output,
             logger=logger,
             run_context=run_context_data,
         )
@@ -244,7 +244,7 @@ def run_algorithm(run_dir: Path, algorithm_path: Path) -> int:
         "status": "succeeded" if exit_code == 0 else "failed",
         "startedAt": start_time.isoformat(),
         "completedAt": end_time.isoformat(),
-        "datasets": artifacts.build_manifest_datasets() if exit_code == 0 else [],
+        "datasets": output.build_manifest_datasets() if exit_code == 0 else [],
     }
 
     if error_message:
