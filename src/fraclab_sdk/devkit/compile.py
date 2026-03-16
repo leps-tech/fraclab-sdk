@@ -20,7 +20,6 @@ from typing import Any
 
 from fraclab_sdk.errors import AlgorithmError
 from fraclab_sdk.materialize.hash import compute_file_sha256
-from fraclab_sdk.models import DRS, DataSpec
 
 
 @dataclass
@@ -306,12 +305,6 @@ def compile_algorithm(
         raise AlgorithmError(
             "dist/ds.json or dist/drs.json not found. Provide --bundle to copy from bundle."
         )
-
-    try:
-        DataSpec.model_validate_json(ds_path.read_text(encoding="utf-8"))
-        DRS.model_validate_json(drs_path.read_text(encoding="utf-8"))
-    except Exception as e:
-        raise AlgorithmError(f"dist/ds.json or dist/drs.json is not valid camelCase SDK spec: {e}") from e
 
     # 4. Update manifest.json with files pointers
     manifest = json.loads(manifest_path.read_text())

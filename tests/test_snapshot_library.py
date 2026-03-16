@@ -15,12 +15,14 @@ def _write_snapshot_source(
     ds_path: str = "ds.json",
     drs_path: str = "drs.json",
     data_root: str = "data",
+    ds_payload: dict | None = None,
+    drs_payload: dict | None = None,
 ) -> Path:
     source_dir = tmp_path / "bundle"
     source_dir.mkdir()
 
-    ds_bytes = json.dumps({"schemaVersion": "1.0", "datasets": []}).encode("utf-8")
-    drs_bytes = json.dumps({"schemaVersion": "1.0", "datasets": []}).encode("utf-8")
+    ds_bytes = json.dumps(ds_payload or {"schemaVersion": "1.0", "datasets": []}).encode("utf-8")
+    drs_bytes = json.dumps(drs_payload or {"schemaVersion": "1.0", "datasets": []}).encode("utf-8")
 
     (source_dir / "ds.json").write_bytes(ds_bytes)
     (source_dir / "drs.json").write_bytes(drs_bytes)
@@ -71,3 +73,16 @@ def test_snapshot_handle_rejects_unsafe_manifest_paths_on_access(tmp_path: Path)
 
     with pytest.raises(SnapshotError, match="Unsafe manifest path specFiles.dsPath"):
         _ = snapshot.dataspec
+
+
+def test_import_snapshot_does_not_validate_ds_or_drs_shape(tmp_path: Path) -> None:
+    source_dir = _write_snapshot_source(
+        tmp_path,
+        ds_payload={"datasets": [{"key": "legacy_dataset"}]},
+        drs_payload={"datasets": [{"resource": "legacy_resource"}]},
+    )
+    snapshot_lib = SnapshotLibrary(SDKConfig(tmp_path / "sdk-home"))
+
+    snapshot_id = snapshot_lib.import_snapshot(source_dir)
+
+    assert snapshot_id

@@ -6,7 +6,7 @@ from pathlib import Path
 from fraclab_sdk.config import SDKConfig
 from fraclab_sdk.errors import HashMismatchError, SnapshotError
 from fraclab_sdk.materialize.hash import compute_sha256
-from fraclab_sdk.models import DRS, BundleManifest, DataSpec
+from fraclab_sdk.models import BundleManifest
 from fraclab_sdk.snapshot.index import SnapshotIndex, SnapshotMeta
 from fraclab_sdk.snapshot.loader import SnapshotHandle
 from fraclab_sdk.utils.path_safety import is_safe_relative_path
@@ -116,14 +116,6 @@ class SnapshotLibrary:
             raise HashMismatchError(
                 manifest.specFiles.drsPath, manifest.specFiles.drsSha256, drs_hash
             )
-
-        try:
-            DataSpec.model_validate_json(ds_bytes.decode())
-            DRS.model_validate_json(drs_bytes.decode())
-        except Exception as e:
-            raise SnapshotError(
-                f"Bundle ds.json or drs.json does not match camelCase SDK spec: {e}"
-            ) from e
 
         # Generate snapshot_id from manifest hash
         snapshot_id = _generate_snapshot_id(manifest_bytes)
