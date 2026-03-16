@@ -260,6 +260,22 @@ def _validate_time_window_shape(
         )
 
 
+def _validate_time_window_unit(path: str, extra: dict[str, Any], issues: list[ValidationIssue]) -> None:
+    """Enforce the fixed runtime unit for time_window fields."""
+    unit = extra.get("unit")
+    if unit == "us":
+        return
+    issues.append(
+        ValidationIssue(
+            severity=ValidationSeverity.ERROR,
+            code="TIME_WINDOW_UNIT_INVALID",
+            message="uiType='time_window' uses fixed epoch microseconds (UTC); unit must be explicitly 'us'",
+            path=_path_join(path, "unit"),
+            details={"allowed": "us", "actual": unit},
+        )
+    )
+
+
 def _to_camel_case(snake_str: str) -> str:
     """Convert snake_case to camelCase."""
     parts = snake_str.split("_")
@@ -880,6 +896,7 @@ def _validate_json_schema_extra(
         # uiType specific validation
         if key == "uiType" and value == "time_window":
             _validate_time_window_shape(raw_field_schema, full_schema, path, issues)
+            _validate_time_window_unit(path, extra, issues)
             # bindDatasetKey is required for time_window fields
             if "bindDatasetKey" not in extra:
                 issues.append(

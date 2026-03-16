@@ -22,8 +22,12 @@ tests/**/*.pyc
 
 # Keep package/release metadata docs
 !pyproject.toml
+!poetry.lock
 !README.md
 !CHANGELOG.md
+!mkdocs.yml
+!docs/
+!docs/**
 
 # Keep GitHub Actions workflow for automated PyPI publish
 !.github/

@@ -108,13 +108,13 @@ def _parse_timestamp_series(series: pd.Series) -> pd.Series:
     return pd.to_datetime(series, errors="coerce", utc=True)
 
 
-def _datetime_series_to_epoch_seconds(series: pd.Series) -> list[float]:
-    """Convert datetime-like values to epoch seconds."""
+def _datetime_series_to_epoch_microseconds(series: pd.Series) -> list[float]:
+    """Convert datetime-like values to epoch microseconds."""
     dt = pd.to_datetime(series, errors="coerce", utc=True).dropna()
     if dt.empty:
         return []
     dt_ns = dt.dt.tz_convert("UTC").dt.tz_localize(None).astype("datetime64[ns]").astype("int64")
-    return (dt_ns / 1e9).astype(float).tolist()
+    return (dt_ns // 1_000).astype(float).tolist()
 
 
 def _downsample_trace(
@@ -205,7 +205,7 @@ def build_parquet_preview_from_files(
             base_mask = x_dt.notna()
             if not base_mask.any():
                 continue
-            x_valid = _datetime_series_to_epoch_seconds(x_dt[base_mask])
+            x_valid = _datetime_series_to_epoch_microseconds(x_dt[base_mask])
         else:
             x_num = pd.to_numeric(df[x_col], errors="coerce")
             base_mask = x_num.notna()
@@ -232,7 +232,7 @@ def build_parquet_preview_from_files(
                 continue
 
             if x_is_datetime:
-                x_vals = _datetime_series_to_epoch_seconds(x_dt[mask])
+                x_vals = _datetime_series_to_epoch_microseconds(x_dt[mask])
             else:
                 x_vals = pd.to_numeric(df.loc[mask, x_col], errors="coerce").astype(float).tolist()
             y_vals = y_series[mask].astype(float).tolist()
@@ -282,7 +282,7 @@ def build_parquet_preview_figure(
     for index, trace in enumerate(traces):
         x_values = trace.get("x") or []
         if x_is_datetime:
-            x_values = [_epoch_seconds_to_utc_naive(value) for value in x_values]
+            x_values = [_epoch_microseconds_to_utc_naive(value) for value in x_values]
         figure.add_trace(
             go.Scatter(
                 x=x_values,
@@ -308,15 +308,15 @@ def build_parquet_preview_figure(
     )
     if x_range and len(x_range) == 2:
         if x_is_datetime:
-            figure.update_xaxes(range=[_epoch_seconds_to_utc_naive(x_range[0]), _epoch_seconds_to_utc_naive(x_range[1])])
+            figure.update_xaxes(range=[_epoch_microseconds_to_utc_naive(x_range[0]), _epoch_microseconds_to_utc_naive(x_range[1])])
         else:
             figure.update_xaxes(range=x_range)
     return figure
 
 
-def _epoch_seconds_to_utc_naive(epoch_seconds: float) -> datetime:
-    """Convert epoch seconds to a naive UTC datetime for Plotly display."""
-    return datetime.fromtimestamp(float(epoch_seconds), tz=UTC).replace(tzinfo=None)
+def _epoch_microseconds_to_utc_naive(epoch_microseconds: float) -> datetime:
+    """Convert epoch microseconds to a naive UTC datetime for Plotly display."""
+    return datetime.fromtimestamp(float(epoch_microseconds) / 1_000_000.0, tz=UTC).replace(tzinfo=None)
 
 
 __all__ = ["build_parquet_preview_figure", "build_parquet_preview_from_files"]

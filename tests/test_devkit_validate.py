@@ -133,3 +133,100 @@ def test_time_window_optional_shape_accepts_nullable_array_schema() -> None:
     _validate_schema_properties(schema, schema, "", issues)
 
     assert "TIME_WINDOW_NOT_OPTIONAL" not in _issue_codes(issues)
+
+
+def test_time_window_unit_must_be_explicit_epoch_microseconds() -> None:
+    missing_unit_schema = {
+        "type": "object",
+        "properties": {
+            "timeWindows_samples_core_stage_2222": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "min": {"type": "number"},
+                                "max": {"type": "number"},
+                            },
+                            "required": ["min", "max"],
+                        },
+                    },
+                    {"type": "null"},
+                ],
+                "default": None,
+                "uiType": "time_window",
+                "bindDatasetKey": "samples_core_stage_2222",
+                "title": "Time Windows",
+            }
+        },
+    }
+    issues = []
+
+    _validate_schema_properties(missing_unit_schema, missing_unit_schema, "", issues)
+
+    assert "TIME_WINDOW_UNIT_INVALID" in _issue_codes(issues)
+
+    valid_schema = {
+        "type": "object",
+        "properties": {
+            "timeWindows_samples_core_stage_2222": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "min": {"type": "number"},
+                                "max": {"type": "number"},
+                            },
+                            "required": ["min", "max"],
+                        },
+                    },
+                    {"type": "null"},
+                ],
+                "default": None,
+                "uiType": "time_window",
+                "bindDatasetKey": "samples_core_stage_2222",
+                "title": "Time Windows",
+                "unit": "us",
+            }
+        },
+    }
+    issues = []
+
+    _validate_schema_properties(valid_schema, valid_schema, "", issues)
+
+    assert "TIME_WINDOW_UNIT_INVALID" not in _issue_codes(issues)
+
+    invalid_unit_schema = {
+        "type": "object",
+        "properties": {
+            "timeWindows_samples_core_stage_2222": {
+                "anyOf": [
+                    {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "min": {"type": "number"},
+                                "max": {"type": "number"},
+                            },
+                            "required": ["min", "max"],
+                        },
+                    },
+                    {"type": "null"},
+                ],
+                "default": None,
+                "uiType": "time_window",
+                "bindDatasetKey": "samples_core_stage_2222",
+                "title": "Time Windows",
+                "unit": "s",
+            }
+        },
+    }
+    issues = []
+
+    _validate_schema_properties(invalid_unit_schema, invalid_unit_schema, "", issues)
+
+    assert "TIME_WINDOW_UNIT_INVALID" in _issue_codes(issues)

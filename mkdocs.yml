@@ -1,0 +1,40 @@
+site_name: Fraclab SDK
+site_description: Fraclab SDK documentation
+docs_dir: docs
+theme:
+  name: material
+  language: zh
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+markdown_extensions:
+  - admonition
+  - attr_list
+  - fenced_code
+  - tables
+  - toc:
+      permalink: true
+nav:
+  - 首页: index.md
+  - 快速开始:
+      - 安装与环境: getting-started/installation.md
+      - 第一个算法: getting-started/first-algorithm.md
+  - 算法指南:
+      - Bundle 与 Snapshot: guides/bundle-snapshot.md
+      - InputSpec: guides/input-spec.md
+      - Output: guides/output.md
+      - 编译与导入导出: guides/compile-export-import.md
+  - CLI:
+      - 概览: cli/overview.md
+  - Workbench:
+      - 概览: workbench/overview.md
+  - 参考:
+      - Runtime API: reference/runtime-api.md
+      - 数据模型: reference/models.md
+      - Bundle 规范: reference/bundle-spec.md
+      - 错误处理: reference/errors.md
+  - 架构:
+      - 执行模型: architecture/execution-model.md

@@ -16,6 +16,19 @@ from fraclab_sdk.workbench import ui_styles
 from fraclab_sdk.workbench.components.time_window_picker import time_window_picker
 from fraclab_sdk.workbench.i18n import page_title, run_status_label, tx
 from fraclab_sdk.workbench.parquet_preview import build_parquet_preview_from_files
+from fraclab_sdk.workbench.schema_form import (
+    constant_field_value,
+    extract_array_enum_choices,
+    extract_enum_choices,
+    extract_object_union,
+    extract_ui_type,
+    field_is_visible,
+    is_nullable_schema,
+    match_object_union_branch,
+    normalize_schema,
+    schema_meta,
+    sort_schema_properties,
+)
 
 st.set_page_config(
     page_title=page_title("run"),
@@ -77,9 +90,13 @@ algo_lib = AlgorithmLibrary(config)
 
 # --- Intelligent Layout Engine ---
 
-def _is_compact_field(schema: dict) -> bool:
+def _is_compact_field(schema: dict[str, Any], root_schema: dict[str, Any]) -> bool:
     """Determine if a field is small enough to fit in a grid column."""
-    ftype = schema.get("type")
+    if constant_field_value(schema, root_schema) is not None:
+        return True
+    if extract_enum_choices(schema, root_schema) is not None:
+        return True
+    ftype = normalize_schema(schema, root_schema).get("type") or schema.get("type")
     # Numbers, Booleans, and short Strings (without enums/long defaults) are compact
     if ftype in ["integer", "number", "boolean"]:
         return True
@@ -108,61 +125,6 @@ def _resolve_number_step_and_format(schema: dict) -> tuple[float, str]:
     # Decimal exponent: -3 means 3 decimal places.
     decimals = max(0, -step_decimal.normalize().as_tuple().exponent)
     return float(step_decimal), f"%.{decimals}f"
-
-
-def _extract_ui_type(schema: dict[str, Any]) -> str | None:
-    """Extract uiType from schema field metadata."""
-    if isinstance(schema.get("uiType"), str):
-        return schema.get("uiType")
-    extra = schema.get("json_schema_extra")
-    if isinstance(extra, dict) and isinstance(extra.get("uiType"), str):
-        return extra.get("uiType")
-    return None
-
-
-def _schema_meta(schema: dict[str, Any], key: str, default: Any = None) -> Any:
-    """Read metadata from top-level first, then json_schema_extra."""
-    if key in schema:
-        return schema.get(key)
-    extra = schema.get("json_schema_extra")
-    if isinstance(extra, dict) and key in extra:
-        return extra.get(key)
-    return default
-
-
-def _resolve_ref_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> dict[str, Any]:
-    """Resolve local JSON-schema $ref like '#/$defs/Name'."""
-    ref = schema.get("$ref")
-    if not isinstance(ref, str) or not ref.startswith("#/"):
-        return schema
-    current: Any = root_schema
-    for part in ref[2:].split("/"):
-        if not isinstance(current, dict):
-            return schema
-        current = current.get(part)
-        if current is None:
-            return schema
-    return current if isinstance(current, dict) else schema
-
-
-def _unwrap_nullable_anyof(schema: dict[str, Any]) -> dict[str, Any]:
-    """For Optional[T], prefer the non-null branch."""
-    any_of = schema.get("anyOf")
-    if not isinstance(any_of, list):
-        return schema
-    non_null = [branch for branch in any_of if isinstance(branch, dict) and branch.get("type") != "null"]
-    if len(non_null) == 1:
-        return non_null[0]
-    return schema
-
-
-def _normalize_schema(schema: dict[str, Any], root_schema: dict[str, Any]) -> dict[str, Any]:
-    """Resolve common wrappers (anyOf/null + $ref) for type-shape checks."""
-    current = _unwrap_nullable_anyof(schema)
-    if "$ref" in current:
-        current = _resolve_ref_schema(current, root_schema)
-    return current
-
 
 def _load_run_ds(run_dir: Path) -> DataSpec | None:
     """Load run input ds.json."""
@@ -251,10 +213,10 @@ def _build_item_label(item: dict[str, Any]) -> str:
 
 def _time_window_mode(schema: dict[str, Any], root_schema: dict[str, Any]) -> str | None:
     """Resolve schema mode for ui_type=time_window."""
-    normalized = _normalize_schema(schema, root_schema)
+    normalized = normalize_schema(schema, root_schema)
     if normalized.get("type") != "array":
         return None
-    item_schema = _normalize_schema(normalized.get("items", {}), root_schema)
+    item_schema = normalize_schema(normalized.get("items", {}), root_schema)
     if item_schema.get("type") != "object":
         return None
     props = item_schema.get("properties")
@@ -267,7 +229,7 @@ def _extract_window_bounds(schema: dict[str, Any], root_schema: dict[str, Any], 
     """Extract min/max windows per item from schema."""
     if mode != "window_list":
         return None, None
-    normalized = _normalize_schema(schema, root_schema)
+    normalized = normalize_schema(schema, root_schema)
     min_items = normalized.get("minItems")
     max_items = normalized.get("maxItems")
     return (min_items if isinstance(min_items, int) else None, max_items if isinstance(max_items, int) else None)
@@ -501,7 +463,7 @@ def _render_time_window_v2(
         st.warning(tx("No datasets found in run input.", "在运行输入中未找到数据集。"))
         return value
 
-    bind_dataset_key = str(_schema_meta(schema, "bindDatasetKey", "") or "").strip() or None
+    bind_dataset_key = str(schema_meta(schema, "bindDatasetKey", "") or "").strip() or None
     if bind_dataset_key:
         if bind_dataset_key not in datasets_config:
             st.warning(
@@ -538,6 +500,186 @@ def _render_time_window_v2(
         datasets_config,
     )
 
+
+def _enum_format(choice_map: dict[str, str], value: Any) -> str:
+    """Format enum value using enumLabels when available."""
+    return choice_map.get(str(value), str(value))
+
+
+def _render_scalar_enum(
+    title: str,
+    help_text: str | None,
+    path: str,
+    value: Any,
+    default_val: Any,
+    choices: tuple[Any, ...],
+    choice_map: dict[str, str],
+    *,
+    nullable: bool,
+) -> Any:
+    """Render scalar enum as a selectbox."""
+    options: list[Any] = [None] if nullable else []
+    options.extend(choices)
+    current = value if value in options else default_val if default_val in options else (None if nullable else choices[0])
+    return st.selectbox(
+        title,
+        options=options,
+        index=options.index(current),
+        format_func=lambda option: tx("None", "空值") if option is None else _enum_format(choice_map, option),
+        help=help_text,
+        key=path,
+    )
+
+
+def _render_array_enum(
+    title: str,
+    help_text: str | None,
+    path: str,
+    value: Any,
+    default_val: Any,
+    choices: tuple[Any, ...],
+    choice_map: dict[str, str],
+) -> Any:
+    """Render enum array as a multiselect."""
+    current = value if isinstance(value, list) else default_val if isinstance(default_val, list) else []
+    selected = [item for item in current if item in choices]
+    return st.multiselect(
+        title,
+        options=list(choices),
+        default=selected,
+        format_func=lambda option: _enum_format(choice_map, option),
+        help=help_text,
+        key=path,
+    )
+
+
+def _render_object_union(
+    key: str,
+    title: str,
+    help_text: str | None,
+    schema: dict[str, Any],
+    value: Any,
+    default_val: Any,
+    path: str,
+    root_schema: dict[str, Any],
+) -> Any:
+    """Render discriminator-based object unions."""
+    union_schema = extract_object_union(schema, root_schema)
+    if union_schema is None:
+        return _render_json_editor(title, value, default_val, help_text, path)
+
+    branch_by_key = {branch.key: branch for branch in union_schema.branches}
+    branch_options: list[str | None] = [None] if union_schema.nullable else []
+    branch_options.extend(branch_by_key.keys())
+
+    current_value = value if isinstance(value, dict) else (default_val if isinstance(default_val, dict) else None)
+    active_key = match_object_union_branch(union_schema, current_value)
+    current_option: str | None
+    if current_value is None and union_schema.nullable:
+        current_option = None
+    elif active_key not in branch_by_key:
+        active_key = union_schema.branches[0].key if union_schema.branches else None
+        current_option = active_key if active_key is not None else None
+    else:
+        current_option = active_key
+
+    selected_option = st.selectbox(
+        title,
+        options=branch_options,
+        index=branch_options.index(current_option if current_option in branch_options else None if union_schema.nullable else branch_options[0]),
+        format_func=lambda option: tx("None", "空值")
+        if option is None
+        else branch_by_key[str(option)].label,
+        help=help_text,
+        key=f"{path}.__branch__",
+    )
+    if selected_option is None:
+        return None
+
+    branch = branch_by_key[str(selected_option)]
+    props = branch.schema.get("properties", {})
+    current_obj = current_value if isinstance(current_value, dict) else {}
+    default_obj = default_val if isinstance(default_val, dict) else {}
+    branch_values = {
+        **default_obj,
+        **current_obj,
+    }
+    if union_schema.discriminator:
+        branch_values[union_schema.discriminator] = branch.key
+
+    with st.container(border=True):
+        st.markdown(f"**{branch.label}**")
+        return render_schema_grid(props, branch_values, path, root_schema)
+
+
+def _coerce_date_string(raw_value: Any) -> str | None:
+    if raw_value is None:
+        return None
+    if hasattr(raw_value, "isoformat"):
+        with suppress(Exception):
+            return raw_value.isoformat()
+    text = str(raw_value).strip()
+    return text or None
+
+
+def _render_datetime_string(
+    title: str,
+    help_text: str | None,
+    path: str,
+    value: Any,
+    default_val: Any,
+    *,
+    date_only: bool,
+) -> str | None:
+    """Render date/date-time values as explicit ISO text."""
+    current = _coerce_date_string(value)
+    default_text = _coerce_date_string(default_val)
+    val = current if current is not None else (default_text or "")
+    suffix = tx("Use ISO format.", "请使用 ISO 格式。")
+    merged_help = f"{help_text} {suffix}".strip() if help_text else suffix
+    return st.text_input(title, value=val, help=merged_help, key=path, placeholder="YYYY-MM-DD" if date_only else "YYYY-MM-DDTHH:MM:SSZ") or None
+
+
+def _render_nullable_numeric(
+    title: str,
+    help_text: str | None,
+    path: str,
+    value: Any,
+    default_val: Any,
+    *,
+    integer: bool,
+) -> int | float | None:
+    """Render nullable numeric fields as text so blank can map to None."""
+    current = value if value is not None else default_val
+    raw = "" if current is None else str(int(current) if integer else current)
+    text = st.text_input(title, value=raw, help=help_text, key=path)
+    if not text.strip():
+        return None
+    try:
+        return int(text.strip()) if integer else float(text.strip())
+    except ValueError:
+        return current
+
+
+def _render_nullable_boolean(
+    title: str,
+    help_text: str | None,
+    path: str,
+    value: Any,
+    default_val: Any,
+) -> bool | None:
+    """Render nullable booleans with an explicit null option."""
+    options = [None, True, False]
+    current = value if value in options else default_val if default_val in options else None
+    return st.selectbox(
+        title,
+        options=options,
+        index=options.index(current),
+        format_func=lambda option: tx("None", "空值") if option is None else tx("True", "是") if option else tx("False", "否"),
+        help=help_text,
+        key=path,
+    )
+
 def render_field_widget(
     key: str,
     schema: dict[str, Any],
@@ -546,24 +688,61 @@ def render_field_widget(
     root_schema: dict[str, Any],
 ) -> Any:
     """Render a single widget based on schema type."""
-    ui_type = _extract_ui_type(schema)
+    ui_type = extract_ui_type(schema)
     if ui_type == "time_window":
         return _render_time_window_v2(key, schema, value, path, root_schema)
 
-    effective_schema = _normalize_schema(schema, root_schema)
+    const_value = constant_field_value(schema, root_schema)
+    if const_value is not None:
+        return const_value
+
+    effective_schema = normalize_schema(schema, root_schema)
     ftype = effective_schema.get("type") or schema.get("type")
     title = schema.get("title") or key
-    # Simplify label: if title is camelCase, maybe split it? For now use title directly.
-    # description = schema.get("description") # Tooltip is enough, don't clutter UI text
-    
     default_val = schema.get("default")
     help_text = schema.get("description")
+    nullable = is_nullable_schema(schema, root_schema)
+
+    enum_config = extract_enum_choices(schema, root_schema)
+    if enum_config is not None:
+        enum_choices, nullable = enum_config
+        choice_values = tuple(choice.value for choice in enum_choices)
+        choice_map = {str(choice.value): choice.label for choice in enum_choices}
+        return _render_scalar_enum(
+            title,
+            help_text,
+            path,
+            value,
+            default_val,
+            choice_values,
+            choice_map,
+            nullable=nullable,
+        )
+
+    array_enum_config = extract_array_enum_choices(schema, root_schema)
+    if array_enum_config is not None:
+        array_choices, _nullable = array_enum_config
+        choice_values = tuple(choice.value for choice in array_choices)
+        choice_map = {str(choice.value): choice.label for choice in array_choices}
+        return _render_array_enum(title, help_text, path, value, default_val, choice_values, choice_map)
+
+    object_union = extract_object_union(schema, root_schema)
+    if object_union is not None:
+        return _render_object_union(key, title, help_text, schema, value, default_val, path, root_schema)
 
     if ftype == "string":
+        string_format = effective_schema.get("format")
+        if string_format == "date-time":
+            return _render_datetime_string(title, help_text, path, value, default_val, date_only=False)
+        if string_format == "date":
+            return _render_datetime_string(title, help_text, path, value, default_val, date_only=True)
         val = value if value is not None else (default_val or "")
-        return st.text_input(title, value=val, help=help_text, key=path)
+        text = st.text_input(title, value=val, help=help_text, key=path)
+        return None if nullable and not text.strip() else text
     
     if ftype == "number":
+        if nullable:
+            return _render_nullable_numeric(title, help_text, path, value, default_val, integer=False)
         val = value if value is not None else default_val
         step, number_format = _resolve_number_step_and_format(schema)
         return st.number_input(
@@ -576,10 +755,14 @@ def render_field_widget(
         )
     
     if ftype == "integer":
+        if nullable:
+            return _render_nullable_numeric(title, help_text, path, value, default_val, integer=True)
         val = value if value is not None else default_val
         return int(st.number_input(title, value=int(val or 0), step=1, help=help_text, key=path))
     
     if ftype == "boolean":
+        if nullable:
+            return _render_nullable_boolean(title, help_text, path, value, default_val)
         val = value if value is not None else default_val
         # Toggle looks better than checkbox in grid
         return st.toggle(title, value=bool(val), help=help_text, key=path)
@@ -634,17 +817,54 @@ def render_schema_grid(
     - Compact fields (numbers, bools) get packed into columns (up to 4).
     - Wide fields (objects, arrays) break the line and take full width.
     """
-    result = {}
-    time_window_fields: list[tuple[str, dict[str, Any], str]] = []
-    for p_key, p_schema in properties.items():
-        if _extract_ui_type(p_schema) == "time_window":
-            bind_key = str(_schema_meta(p_schema, "bindDatasetKey", "") or "").strip()
-            time_window_fields.append((p_key, p_schema, bind_key))
-
+    result: dict[str, Any] = {}
+    ordered_properties = sort_schema_properties(properties)
+    visible_time_window_fields: list[tuple[str, dict[str, Any], str]] = []
     grouped_time_window_values: dict[str, Any] = {}
     grouped_time_window_context: tuple[dict[str, Any], dict[str, str], str] | None = None
-    if time_window_fields:
-        missing_bind = [k for (k, _, b) in time_window_fields if not b]
+    compact_buffer: list[tuple[str, dict[str, Any]]] = []
+
+    def live_values() -> dict[str, Any]:
+        return {**current_values, **result}
+
+    def flush_buffer() -> None:
+        if not compact_buffer:
+            return
+        for i in range(0, len(compact_buffer), 4):
+            batch = compact_buffer[i : i + 4]
+            cols = st.columns(len(batch))
+            for col, (field_key, field_schema) in zip(cols, batch, strict=True):
+                with col:
+                    result[field_key] = render_field_widget(
+                        field_key,
+                        field_schema,
+                        current_values.get(field_key),
+                        f"{prefix}.{field_key}",
+                        root_schema,
+                    )
+        compact_buffer.clear()
+
+    for key, prop_schema in ordered_properties:
+        if not field_is_visible(prop_schema, live_values()):
+            continue
+        if extract_ui_type(prop_schema) == "time_window":
+            bind_key = str(schema_meta(prop_schema, "bindDatasetKey", "") or "").strip()
+            visible_time_window_fields.append((key, prop_schema, bind_key))
+            continue
+        const_value = constant_field_value(prop_schema, root_schema)
+        if const_value is not None:
+            result[key] = const_value
+            continue
+        if _is_compact_field(prop_schema, root_schema):
+            compact_buffer.append((key, prop_schema))
+            continue
+        flush_buffer()
+        result[key] = render_field_widget(key, prop_schema, current_values.get(key), f"{prefix}.{key}", root_schema)
+
+    flush_buffer()
+
+    if visible_time_window_fields:
+        missing_bind = [key for key, _schema, bind_key in visible_time_window_fields if not bind_key]
         if missing_bind:
             st.error(
                 tx(
@@ -656,7 +876,7 @@ def render_schema_grid(
         else:
             bind_to_field: dict[str, tuple[str, dict[str, Any]]] = {}
             duplicate_binds: list[str] = []
-            for field_key, field_schema, bind_key in time_window_fields:
+            for field_key, field_schema, bind_key in visible_time_window_fields:
                 if bind_key in bind_to_field:
                     duplicate_binds.append(bind_key)
                 else:
@@ -678,9 +898,14 @@ def render_schema_grid(
                         run_dataset_keys = [str(ds.key) for ds in run_ds.datasets]
 
                 if not run_dataset_keys:
-                    st.error(tx("Cannot resolve selected datasets from current run (input/ds.json missing or invalid).", "无法从当前运行中解析已选数据集（input/ds.json 缺失或无效）。"))
+                    st.error(
+                        tx(
+                            "Cannot resolve selected datasets from current run (input/ds.json missing or invalid).",
+                            "无法从当前运行中解析已选数据集（input/ds.json 缺失或无效）。",
+                        )
+                    )
                 else:
-                    active_datasets = [ds_key for ds_key in run_dataset_keys if ds_key in bind_to_field]
+                    active_datasets = [dataset_key for dataset_key in run_dataset_keys if dataset_key in bind_to_field]
                     if not active_datasets:
                         st.error(
                             tx(
@@ -693,7 +918,12 @@ def render_schema_grid(
                         group_schema = bind_to_field[active_datasets[0]][1]
                         mode = _time_window_mode(group_schema, root_schema)
                         if mode != "window_list":
-                            st.error(tx("time_window schema invalid. Expected Optional[list[TimeWindow]].", "time_window schema 无效，应为 Optional[list[TimeWindow]]。"))
+                            st.error(
+                                tx(
+                                    "time_window schema invalid. Expected Optional[list[TimeWindow]].",
+                                    "time_window schema 无效，应为 Optional[list[TimeWindow]]。",
+                                )
+                            )
                         elif not isinstance(run_dir_str, str) or not run_dir_str.strip():
                             st.error(tx("Run context unavailable for time_window widget.", "time_window 组件的运行上下文不可用。"))
                         else:
@@ -702,7 +932,9 @@ def render_schema_grid(
                             if not datasets_config:
                                 st.error(tx("No datasets found in run input.", "在运行输入中未找到数据集。"))
                             else:
-                                datasets_config = {k: v for k, v in datasets_config.items() if k in set(active_datasets)}
+                                datasets_config = {
+                                    key: value for key, value in datasets_config.items() if key in set(active_datasets)
+                                }
                                 for dataset_key in active_datasets:
                                     field_key, field_schema = bind_to_field[dataset_key]
                                     min_windows, max_windows = _extract_window_bounds(field_schema, root_schema, "window_list")
@@ -710,55 +942,17 @@ def render_schema_grid(
                                         max_windows = 64
                                     if dataset_key in datasets_config:
                                         datasets_config[dataset_key]["window_count"] = {"min": min_windows, "max": max_windows}
-                                        datasets_config[dataset_key]["window_slots"] = _schema_meta(field_schema, "windowSlots", [])
-                                        datasets_config[dataset_key]["window_slot_fallback_note"] = (
-                                            str(_schema_meta(field_schema, "windowSlotFallbackNote", "") or "").strip()
-                                        )
+                                        datasets_config[dataset_key]["window_slots"] = schema_meta(field_schema, "windowSlots", [])
+                                        datasets_config[dataset_key]["window_slot_fallback_note"] = str(
+                                            schema_meta(field_schema, "windowSlotFallbackNote", "") or ""
+                                        ).strip()
 
-                                dataset_to_field = {dataset_key: bind_to_field[dataset_key][0] for dataset_key in active_datasets}
+                                dataset_to_field = {
+                                    dataset_key: bind_to_field[dataset_key][0] for dataset_key in active_datasets
+                                }
                                 run_id = str(st.session_state.get("_active_run_id", "unknown"))
                                 grouped_time_window_context = (datasets_config, dataset_to_field, run_id)
-    
-    # 1. Separate fields into groups to maintain partial order while grid-packing
-    # Strategy: Iterate and buffer compact fields. Flush buffer when a wide field hits.
-    
-    compact_buffer = [] # List of (key, schema)
-    
-    def flush_buffer():
-        if not compact_buffer:
-            return
-        
-        n_items = len(compact_buffer)
-        
-        # Split into rows if > 4 items? Simple logic: Just wrap
-        # Actually st.columns handles wrapping poorly, better to batch by 4
-        
-        for i in range(0, n_items, 4):
-            batch = compact_buffer[i : i+4]
-            cols = st.columns(len(batch))
-            for col, (b_key, b_schema) in zip(cols, batch, strict=True):
-                with col:
-                    val = current_values.get(b_key)
-                    result[b_key] = render_field_widget(b_key, b_schema, val, f"{prefix}.{b_key}", root_schema)
-        
-        compact_buffer.clear()
 
-    for key, prop_schema in properties.items():
-        if _extract_ui_type(prop_schema) == "time_window":
-            continue
-        if _is_compact_field(prop_schema):
-            compact_buffer.append((key, prop_schema))
-        else:
-            # Wide field encountered: flush buffer first
-            flush_buffer()
-            # Render wide field
-            val = current_values.get(key)
-            result[key] = render_field_widget(key, prop_schema, val, f"{prefix}.{key}", root_schema)
-    
-    # Final flush
-    flush_buffer()
-
-    # Render one unified time-window selector at the bottom.
     if grouped_time_window_context is not None:
         datasets_config, dataset_to_field, run_id = grouped_time_window_context
         component_value = _coerce_time_window_group_value_for_component(
@@ -781,14 +975,13 @@ def render_schema_grid(
             current_values,
         )
 
-    for field_key, _, _ in time_window_fields:
+    for field_key, _field_schema, _bind_key in visible_time_window_fields:
         result[field_key] = grouped_time_window_values.get(field_key, current_values.get(field_key))
-    
-    # Preserve extra keys in current_values that aren't in schema
-    for k, v in current_values.items():
-        if k not in result:
-            result[k] = v
-            
+
+    for key, value in current_values.items():
+        if key not in result:
+            result[key] = value
+
     return result
 
 
