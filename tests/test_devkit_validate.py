@@ -135,7 +135,7 @@ def test_time_window_optional_shape_accepts_nullable_array_schema() -> None:
     assert "TIME_WINDOW_NOT_OPTIONAL" not in _issue_codes(issues)
 
 
-def test_time_window_unit_must_be_explicit_epoch_microseconds() -> None:
+def test_time_window_unit_must_be_explicit_microseconds() -> None:
     missing_unit_schema = {
         "type": "object",
         "properties": {

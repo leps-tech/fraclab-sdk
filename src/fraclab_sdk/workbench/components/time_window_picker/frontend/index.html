@@ -297,10 +297,25 @@
         rootResizeObserver.observe(root);
       }
 
-      function toDateLabel(epochMicros, fractionDigits = 6) {
-        const micros = Math.round(Number(epochMicros));
+      function fractionDigitsForItem(datasetKey, itemKey) {
+        const cfg = getDatasetConfig(datasetKey);
+        const item = cfg.items[itemKey] || {};
+        const step = Number(item.x_step);
+        if (!Number.isFinite(step) || step >= 1) return 0;
+        if (step >= 0.001) return 3;
+        return 6;
+      }
+
+      function formatNumericLabel(value, fractionDigits = 6) {
+        const numeric = Number(value);
+        if (!Number.isFinite(numeric)) return String(value);
+        return numeric.toFixed(fractionDigits);
+      }
+
+      function formatUtcTimestamp(timeUs, fractionDigits = 6) {
+        const micros = Math.round(Number(timeUs));
         const d = new Date(micros / 1000);
-        if (Number.isNaN(d.getTime())) return String(epochMicros);
+        if (Number.isNaN(d.getTime())) return String(timeUs);
         const yyyy = d.getUTCFullYear();
         const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
         const dd = String(d.getUTCDate()).padStart(2, "0");
@@ -315,24 +330,20 @@
         return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${frac}`;
       }
 
-      function epochMicrosToPlotDate(epochMicros) {
-        const e = Number(epochMicros);
-        if (!Number.isFinite(e)) return new Date(NaN);
-        // Plotly date axis/hover uses browser local timezone.
-        // Shift only display coordinates so rendered wall-clock stays in UTC.
-        const probe = new Date(e / 1000);
+      function timeUsToPlotDate(timeUs) {
+        const numeric = Number(timeUs);
+        if (!Number.isFinite(numeric)) return new Date(NaN);
+        const probe = new Date(numeric / 1000);
         const offsetMin = Number.isFinite(probe.getTimezoneOffset()) ? probe.getTimezoneOffset() : 0;
-        return new Date(e / 1000 + offsetMin * 60 * 1000);
+        return new Date(numeric / 1000 + offsetMin * 60 * 1000);
       }
 
-      function dateFractionDigitsForItem(datasetKey, itemKey) {
-        const cfg = getDatasetConfig(datasetKey);
-        const item = cfg.items[itemKey] || {};
-        if (!item.x_is_datetime) return 0;
-        const step = Number(item.x_step);
-        if (!Number.isFinite(step) || step >= 1_000_000) return 0;
-        if (step >= 1_000) return 3;
-        return 6;
+      function plotDateToTimeUs(rawX) {
+        const dt = new Date(rawX);
+        const ms = dt.getTime();
+        if (!Number.isFinite(ms)) return null;
+        const offsetMin = Number.isFinite(dt.getTimezoneOffset()) ? dt.getTimezoneOffset() : 0;
+        return ms * 1000 - offsetMin * 60 * 1_000_000;
       }
 
       function normalizeInputValue(currentValue) {
@@ -441,7 +452,7 @@
         const item = cfg.items[itemKey] || {};
         const raw = Number(item.x_step);
         if (Number.isFinite(raw) && raw > 0) return raw;
-        return item.x_is_datetime ? 1 : 0.001;
+        return item.x_is_time ? 1 : 0.001;
       }
 
       function windowsFor(datasetKey, itemKey) {
@@ -601,33 +612,26 @@
 
       function plotShapes(datasetKey, itemKey) {
         const cfg = getDatasetConfig(datasetKey).items[itemKey] || {};
-        const isDt = !!cfg.x_is_datetime;
+        const isTime = !!cfg.x_is_time;
         const out = [];
         for (const w of windowsFor(datasetKey, itemKey)) {
-          const x1 = isDt ? epochMicrosToPlotDate(w.max) : w.max;
-          const x0Plot = isDt ? epochMicrosToPlotDate(w.min) : w.min;
+          const x1 = isTime ? timeUsToPlotDate(w.max) : w.max;
+          const x0Plot = isTime ? timeUsToPlotDate(w.min) : w.min;
           out.push({ type: "line", xref: "x", yref: "paper", x0: x0Plot, x1: x0Plot, y0: 0, y1: 1, line: { color: "#ef4444", width: 1, dash: "dash" } });
           out.push({ type: "line", xref: "x", yref: "paper", x0: x1, x1, y0: 0, y1: 1, line: { color: "#ef4444", width: 1, dash: "dash" } });
           out.push({ type: "rect", xref: "x", yref: "paper", x0: x0Plot, x1, y0: 0, y1: 1, line: { width: 0 }, fillcolor: "rgba(239,68,68,0.18)" });
         }
         const pending = pendingFor(datasetKey, itemKey);
         if (Number.isFinite(pending)) {
-          const px = isDt ? epochMicrosToPlotDate(pending) : pending;
-          out.push({ type: "line", xref: "x", yref: "paper", x0: px, x1: px, y0: 0, y1: 1, line: { color: "#f59e0b", width: 2, dash: "dot" } });
+          const x0 = isTime ? timeUsToPlotDate(pending) : pending;
+          out.push({ type: "line", xref: "x", yref: "paper", x0, x1: x0, y0: 0, y1: 1, line: { color: "#f59e0b", width: 2, dash: "dot" } });
         }
         return out;
       }
 
-      function toEpochMicros(rawX) {
-        if (typeof rawX === "number") return rawX;
-        const dt = new Date(rawX);
-        const ms = dt.getTime();
-        if (Number.isFinite(ms)) {
-          const offsetMin = Number.isFinite(dt.getTimezoneOffset()) ? dt.getTimezoneOffset() : 0;
-          // Reverse display-only timezone shift.
-          return ms * 1000 - offsetMin * 60 * 1_000_000;
-        }
-        return null;
+      function toNumericX(rawX) {
+        const value = Number(rawX);
+        return Number.isFinite(value) ? value : null;
       }
 
       function currentView() {
@@ -654,12 +658,12 @@
 
         const item = getDatasetConfig(ds).items[itemKey] || {};
         const traces = Array.isArray(item.traces) ? item.traces : [];
-        const isDt = !!item.x_is_datetime;
+        const isTime = !!item.x_is_time;
         const data = traces.map((t, idx) => ({
           type: "scatter",
           mode: "lines",
           name: t.name || `curve-${idx + 1}`,
-          x: isDt ? (t.x || []).map((v) => epochMicrosToPlotDate(v)) : (t.x || []),
+          x: isTime ? (t.x || []).map((v) => timeUsToPlotDate(v)) : (t.x || []),
           y: t.y || [],
           visible: legendState[`${ds}:${itemKey}:${t.name || idx}`] ?? true,
           line: { width: idx === 0 ? 1.5 : 1.2 },
@@ -673,8 +677,8 @@
           showlegend: true,
           dragmode: "zoom",
           xaxis: {
-            title: isDt ? t("time_axis_label", "Time (UTC)") : t("x_axis_label", "X"),
-            range: isDt ? [epochMicrosToPlotDate(xr0), epochMicrosToPlotDate(xr1)] : [xr0, xr1],
+            title: isTime ? t("time_axis_label", "Time (UTC)") : t("x_axis_label", "X"),
+            range: isTime ? [timeUsToPlotDate(xr0), timeUsToPlotDate(xr1)] : [xr0, xr1],
           },
           yaxis: { title: t("value_axis_label", "Value"), autorange: true },
           shapes: plotShapes(ds, itemKey),
@@ -717,11 +721,12 @@
           if (!p) return;
           const [xr0, xr1] = xRangeFor(ds, itemKey);
           const step = xStepFor(ds, itemKey);
+          const isTime = !!(getDatasetConfig(ds).items[itemKey] || {}).x_is_time;
           const cfg = getDatasetConfig(ds);
           const wc = normalizeWindowConstraint(cfg.window_count);
           const maxW = wc.max;
           const windows = windowsFor(ds, itemKey);
-          const xValRaw = toEpochMicros(p.x);
+          const xValRaw = isTime ? plotDateToTimeUs(p.x) : toNumericX(p.x);
           if (!Number.isFinite(xValRaw)) return;
           const xVal = clamp(Number(xValRaw), xr0, xr1);
           const pending = pendingFor(ds, itemKey);
@@ -779,15 +784,15 @@
       function renderWindows(ds, itemKey) {
         windowsEl.innerHTML = "";
         if (!itemKey) return;
-        const isDt = !!(getDatasetConfig(ds).items[itemKey] || {}).x_is_datetime;
-        const dtDigits = dateFractionDigitsForItem(ds, itemKey);
+        const isTime = !!(getDatasetConfig(ds).items[itemKey] || {}).x_is_time;
+        const digits = fractionDigitsForItem(ds, itemKey);
         const windows = windowsFor(ds, itemKey);
         const pending = pendingFor(ds, itemKey);
         clickHint.textContent = Number.isFinite(pending)
           ? t(
               "pending_start_hint",
               "Pending start: {start}. Click again to set end.",
-              { start: isDt ? toDateLabel(pending, dtDigits) : pending.toFixed(6) }
+              { start: isTime ? formatUtcTimestamp(pending, digits) : formatNumericLabel(pending, digits) }
             )
           : t("click_to_set_hint", "Click chart to set start, then click again to set end.");
         const dsCfg = getDatasetConfig(ds);
@@ -884,8 +889,8 @@
               datasetKey,
               itemKey,
               stageId: itemCfg.stage_id || "",
-              isDatetime: !!itemCfg.x_is_datetime,
-              dtDigits: dateFractionDigitsForItem(datasetKey, itemKey),
+              isTime: !!itemCfg.x_is_time,
+              digits: fractionDigitsForItem(datasetKey, itemKey),
               windows,
             });
           }
@@ -914,8 +919,8 @@
             line.className = "global-window-row";
             const text = document.createElement("div");
             text.className = "hint";
-            const start = row.isDatetime ? toDateLabel(w.min, row.dtDigits) : Number(w.min).toFixed(6);
-            const end = row.isDatetime ? toDateLabel(w.max, row.dtDigits) : Number(w.max).toFixed(6);
+            const start = row.isTime ? formatUtcTimestamp(w.min, row.digits) : formatNumericLabel(w.min, row.digits);
+            const end = row.isTime ? formatUtcTimestamp(w.max, row.digits) : formatNumericLabel(w.max, row.digits);
             text.textContent = t(
               "summary_window_line",
               "Window {index}: {start} -> {end}",

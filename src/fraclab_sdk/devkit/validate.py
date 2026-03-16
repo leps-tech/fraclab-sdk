@@ -269,7 +269,7 @@ def _validate_time_window_unit(path: str, extra: dict[str, Any], issues: list[Va
         ValidationIssue(
             severity=ValidationSeverity.ERROR,
             code="TIME_WINDOW_UNIT_INVALID",
-            message="uiType='time_window' uses fixed epoch microseconds (UTC); unit must be explicitly 'us'",
+            message="uiType='time_window' uses fixed microseconds (`us`); unit must be explicitly 'us'",
             path=_path_join(path, "unit"),
             details={"allowed": "us", "actual": unit},
         )

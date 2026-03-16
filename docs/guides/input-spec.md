@@ -79,7 +79,7 @@ class INPUT_SPEC(CamelModel):
 
 - `bindDatasetKey` 必须和 `dist/drs.json` 里的 `datasets[*].key` 对齐
 - `time_window_list()` 自带 `Optional`，不要再额外包一层
-- `unit` 必须显式写成 `us`；运行时时间窗固定为 epoch 微秒（UTC），不做秒/毫秒转换
+- `unit` 必须显式写成 `us`；运行时时间窗固定为 `us` 数值，不做秒/毫秒/日期时间转换
 - 统一选择器会按当前 dataset 切换约束
 
 ## JSON 命名边界

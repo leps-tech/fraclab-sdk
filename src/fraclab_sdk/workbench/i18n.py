@@ -18,6 +18,8 @@ _LANGUAGE_SESSION_KEY = "_workbench_language"
 _LANGUAGE_SELECT_KEY = "_workbench_language_select"
 _LANGUAGE_PERSISTED_CACHE_KEY = "_workbench_language_persisted"
 _LANGUAGE_SETTING_KEY = "language"
+_CURRENT_PAGE_KEY = "_workbench_current_page"
+_LAST_TOOLBAR_PAGE_KEY = "_workbench_language_toolbar_page"
 _WORKBENCH_CONFIG = SDKConfig()
 
 
@@ -101,12 +103,6 @@ def get_language() -> LanguageCode:
     if lang in _SUPPORTED_LANGUAGES:
         return lang
 
-    selected_lang = st.session_state.get(_LANGUAGE_SELECT_KEY)
-    if selected_lang in _SUPPORTED_LANGUAGES:
-        st.session_state[_LANGUAGE_SESSION_KEY] = selected_lang
-        _persist_language(selected_lang)
-        return selected_lang
-
     resolved_lang = _read_persisted_language() or _default_language()
     st.session_state[_LANGUAGE_SESSION_KEY] = resolved_lang
     _persist_language(resolved_lang)
@@ -146,20 +142,39 @@ def _language_option_label(code: LanguageCode) -> str:
     return "English" if code == "en" else "中文"
 
 
+def set_current_page(page_key: str | None) -> None:
+    """Record the current workbench page for page-local widget keys."""
+    st.session_state[_CURRENT_PAGE_KEY] = str(page_key or "global")
+
+
+def _language_widget_key() -> str:
+    """Build a page-local widget key for the language switcher."""
+    current_page = str(st.session_state.get(_CURRENT_PAGE_KEY) or "global")
+    return f"{_LANGUAGE_SELECT_KEY}::{current_page}"
+
+
 def render_language_toolbar() -> None:
     """Render the page-level language switcher."""
     current_lang = get_language()
-    if st.session_state.get(_LANGUAGE_SELECT_KEY) not in _SUPPORTED_LANGUAGES:
-        st.session_state[_LANGUAGE_SELECT_KEY] = current_lang
-    st.selectbox(
+    current_page = str(st.session_state.get(_CURRENT_PAGE_KEY) or "global")
+    widget_key = _language_widget_key()
+    last_toolbar_page = str(st.session_state.get(_LAST_TOOLBAR_PAGE_KEY) or "")
+    widget_lang = st.session_state.get(widget_key)
+    if widget_lang not in _SUPPORTED_LANGUAGES or last_toolbar_page != current_page:
+        st.session_state[widget_key] = current_lang
+    selected_lang = st.selectbox(
         tx("Language", "语言"),
         options=list(_SUPPORTED_LANGUAGES),
         format_func=_language_option_label,
-        key=_LANGUAGE_SELECT_KEY,
-        on_change=_apply_selected_language,
+        key=widget_key,
         label_visibility="collapsed",
         help=tx("Switch UI language", "切换界面语言"),
     )
+    st.session_state[_LAST_TOOLBAR_PAGE_KEY] = current_page
+    if selected_lang in _SUPPORTED_LANGUAGES and selected_lang != current_lang:
+        st.session_state[_LANGUAGE_SESSION_KEY] = selected_lang
+        _persist_language(selected_lang)
+        st.rerun()
 
 
 def render_sidebar_navigation(current_page: str | None = None) -> None:
@@ -181,5 +196,6 @@ __all__ = [
     "render_language_toolbar",
     "render_sidebar_navigation",
     "run_status_label",
+    "set_current_page",
     "tx",
 ]

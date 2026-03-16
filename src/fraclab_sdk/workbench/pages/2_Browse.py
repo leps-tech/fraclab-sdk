@@ -402,14 +402,14 @@ def _preview_request_key(parquet_files: list[Path]) -> tuple[str, ...]:
 def _build_preview_job_payload(parquet_files: tuple[Path, ...], cancel_event: threading.Event) -> dict[str, Any]:
     """Run parquet preview generation in a background worker."""
     try:
-        traces, x_range, _, x_is_datetime = build_parquet_preview_from_files(
+        traces, x_range, _, x_is_time = build_parquet_preview_from_files(
             list(parquet_files),
             max_points=800,
             should_cancel=cancel_event.is_set,
         )
     except ParquetPreviewCancelled:
         return {"kind": "cancelled"}
-    return {"kind": "ready", "traces": traces, "x_range": x_range, "x_is_datetime": x_is_datetime}
+    return {"kind": "ready", "traces": traces, "x_range": x_range, "x_is_time": x_is_time}
 
 
 def _cancel_preview_job(job_key: str) -> None:
@@ -627,7 +627,7 @@ def _render_parquet_visualization(parquet_files: list[Path], key_prefix: str) ->
 
     traces = payload.get("traces") if isinstance(payload, dict) else None
     x_range = payload.get("x_range") if isinstance(payload, dict) else None
-    x_is_datetime = bool(payload.get("x_is_datetime")) if isinstance(payload, dict) else False
+    x_is_time = bool(payload.get("x_is_time")) if isinstance(payload, dict) else False
     if not traces:
         st.session_state.pop(f"{key_prefix}_hidden_feedback", None)
         st.caption(
@@ -641,7 +641,7 @@ def _render_parquet_visualization(parquet_files: list[Path], key_prefix: str) ->
     figure = build_parquet_preview_figure(
         traces,
         x_range=x_range,
-        x_is_datetime=x_is_datetime,
+        x_is_time=x_is_time,
         height=360,
         legend_only_interaction=True,
     )

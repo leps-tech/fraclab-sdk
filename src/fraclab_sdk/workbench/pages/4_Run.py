@@ -408,13 +408,13 @@ def _build_datasets_config(
             traces: list[dict[str, Any]] = []
             x_range = [0.0, 1000.0]
             x_step = 1.0
-            x_is_datetime = False
+            x_is_time = False
 
             if item_dir.exists():
                 parquet_files = sorted(item_dir.rglob("*.parquet"))
                 if parquet_files:
                     with suppress(Exception):
-                        traces, x_range, x_step, x_is_datetime = build_parquet_preview_from_files(
+                        traces, x_range, x_step, x_is_time = build_parquet_preview_from_files(
                             parquet_files,
                             max_points=600,
                         )
@@ -422,7 +422,7 @@ def _build_datasets_config(
             items_cfg[item_key] = {
                 "stage_id": stage_id,
                 "traces": traces,
-                "x_is_datetime": x_is_datetime,
+                "x_is_time": x_is_time,
                 "x_range": x_range,
                 "x_step": x_step,
             }

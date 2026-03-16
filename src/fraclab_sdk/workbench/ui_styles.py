@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from fraclab_sdk.workbench.i18n import render_language_toolbar, render_sidebar_navigation
+from fraclab_sdk.workbench.i18n import render_language_toolbar, render_sidebar_navigation, set_current_page
 
 
 def render_page_header(title: str) -> None:
@@ -23,6 +23,7 @@ def render_page_toolbar() -> None:
 
 def apply_global_styles(current_page: str | None = None):
     """Inject global CSS to hide Streamlit UI elements and apply common styling."""
+    set_current_page(current_page)
     render_sidebar_navigation(current_page)
     st.markdown("""
     <style>

@@ -20,12 +20,39 @@ def _raise_if_cancelled(should_cancel: Callable[[], bool] | None) -> None:
         raise ParquetPreviewCancelled
 
 
+def _supports_time_us(series: pd.Series) -> bool:
+    """Return whether a series can be normalized into raw `us` values."""
+    return pd.api.types.is_numeric_dtype(series) or pd.api.types.is_datetime64_any_dtype(series)
+
+
+def _coerce_time_us_series(series: pd.Series) -> pd.Series:
+    """Normalize numeric or datetime time axes into raw `us` floats."""
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+    if not pd.api.types.is_datetime64_any_dtype(series):
+        return pd.to_numeric(series, errors="coerce")
+
+    dt = pd.to_datetime(series, utc=True, errors="coerce")
+    micros = pd.Series(float("nan"), index=series.index, dtype="float64")
+    valid = dt.notna()
+    if valid.any():
+        micros.loc[valid] = ((dt.loc[valid].dt.as_unit("ns").astype("int64") // 1_000).astype("float64"))
+    return micros
+
+
+def _coerce_x_series(series: pd.Series, x_mode: str) -> pd.Series:
+    """Coerce the chosen x-axis into numeric space used by previews."""
+    if x_mode == "time_us":
+        return _coerce_time_us_series(series)
+    return pd.to_numeric(series, errors="coerce")
+
+
 def _pick_xy_columns(df: pd.DataFrame) -> tuple[str | None, list[str], str]:
-    """Pick x column and all numeric y columns, preferring datetime x-axis."""
+    """Pick x column and all numeric y columns, preferring `us` time axes."""
     if df.empty:
         return None, [], "numeric"
 
-    x_time_candidates = ["timestamp", "bucket", "ts", "ts_us", "time", "datetime", "dateTime", "date", "t"]
+    x_time_candidates = ["ts_us", "timestamp_us", "time_us", "bucket_us", "t_us", "timestamp", "bucket", "ts", "time", "t"]
     x_numeric_candidates = ["sec", "seconds", "x"]
     y_candidates = [
         "treatingPressure",
@@ -47,11 +74,9 @@ def _pick_xy_columns(df: pd.DataFrame) -> tuple[str | None, list[str], str]:
 
     for candidate in x_time_candidates:
         actual = col_map.get(candidate.lower())
-        if actual is None:
+        if actual is None or not _supports_time_us(df[actual]):
             continue
-        parsed = _parse_timestamp_series(df[actual])
-        if parsed.notna().any():
-            return actual, _ordered_y_columns(col_map, numeric_cols, actual, y_candidates), "datetime"
+        return actual, _ordered_y_columns(col_map, numeric_cols, actual, y_candidates), "time_us"
 
     x_col = next(
         (col_map.get(candidate.lower()) for candidate in x_numeric_candidates if col_map.get(candidate.lower()) in numeric_cols),
@@ -77,44 +102,6 @@ def _ordered_y_columns(
     ]
     y_remaining = [col for col in numeric_cols if col != x_col and col not in y_priority]
     return y_priority + y_remaining
-
-
-def _parse_timestamp_series(series: pd.Series) -> pd.Series:
-    """Parse a timestamp-like column, inferring likely numeric epoch units."""
-    if pd.api.types.is_numeric_dtype(series):
-        numeric = pd.to_numeric(series, errors="coerce")
-        finite = numeric.dropna()
-        if finite.empty:
-            return pd.to_datetime(series, errors="coerce", utc=True)
-
-        candidates: list[tuple[int, float, pd.Series]] = []
-        now_year = pd.Timestamp.utcnow().year
-        for unit in ("ns", "us", "ms", "s"):
-            dt = pd.to_datetime(numeric, errors="coerce", utc=True, unit=unit)
-            valid = dt.dropna()
-            if valid.empty:
-                continue
-            years = valid.dt.year
-            in_range = int(((years >= 2000) & (years <= 2100)).sum())
-            median_year = float(years.median())
-            year_distance = abs(median_year - now_year)
-            score = in_range * 1000 - year_distance
-            candidates.append((len(valid), score, dt))
-        if candidates:
-            candidates.sort(key=lambda item: (item[1], item[0]), reverse=True)
-            return candidates[0][2]
-        return pd.to_datetime(numeric, errors="coerce", utc=True)
-
-    return pd.to_datetime(series, errors="coerce", utc=True)
-
-
-def _datetime_series_to_epoch_microseconds(series: pd.Series) -> list[float]:
-    """Convert datetime-like values to epoch microseconds."""
-    dt = pd.to_datetime(series, errors="coerce", utc=True).dropna()
-    if dt.empty:
-        return []
-    dt_ns = dt.dt.tz_convert("UTC").dt.tz_localize(None).astype("datetime64[ns]").astype("int64")
-    return (dt_ns // 1_000).astype(float).tolist()
 
 
 def _downsample_trace(
@@ -184,7 +171,7 @@ def build_parquet_preview_from_files(
 
     needed_cols = [x_col, *y_cols]
     per_file_budget = max(4, min(96, (max_points * 4) // max(1, len(parquet_files))))
-    x_is_datetime = x_mode == "datetime"
+    x_is_time = x_mode == "time_us"
 
     buckets: dict[str, dict[str, list[float]]] = {name: {"x": [], "y": []} for name in y_cols}
     global_x_min: float | None = None
@@ -200,18 +187,11 @@ def build_parquet_preview_from_files(
         if df.empty or x_col not in df.columns:
             continue
 
-        if x_is_datetime:
-            x_dt = _parse_timestamp_series(df[x_col])
-            base_mask = x_dt.notna()
-            if not base_mask.any():
-                continue
-            x_valid = _datetime_series_to_epoch_microseconds(x_dt[base_mask])
-        else:
-            x_num = pd.to_numeric(df[x_col], errors="coerce")
-            base_mask = x_num.notna()
-            if not base_mask.any():
-                continue
-            x_valid = x_num[base_mask].astype(float).tolist()
+        x_num = _coerce_x_series(df[x_col], x_mode)
+        base_mask = x_num.notna()
+        if not base_mask.any():
+            continue
+        x_valid = x_num[base_mask].astype(float).tolist()
 
         if x_valid:
             local_min = float(min(x_valid))
@@ -231,10 +211,7 @@ def build_parquet_preview_from_files(
             if not mask.any():
                 continue
 
-            if x_is_datetime:
-                x_vals = _datetime_series_to_epoch_microseconds(x_dt[mask])
-            else:
-                x_vals = pd.to_numeric(df.loc[mask, x_col], errors="coerce").astype(float).tolist()
+            x_vals = x_num[mask].astype(float).tolist()
             y_vals = y_series[mask].astype(float).tolist()
             if not x_vals or len(x_vals) != len(y_vals):
                 continue
@@ -256,21 +233,21 @@ def build_parquet_preview_from_files(
         traces.append({"name": y_col, "x": xs_final, "y": ys_final})
 
     if not traces:
-        return [], [0.0, 1000.0], (1.0 if x_is_datetime else 1e-6), x_is_datetime
+        return [], [0.0, 1000.0], (1.0 if x_is_time else 1e-6), x_is_time
 
     if global_x_min is None or global_x_max is None:
         x_all = traces[0]["x"]
         global_x_min = float(min(x_all)) if x_all else 0.0
         global_x_max = float(max(x_all)) if x_all else 1000.0
-    x_step = global_x_step if global_x_step is not None else (1.0 if x_is_datetime else 1e-6)
-    return traces, [global_x_min, global_x_max], float(x_step), x_is_datetime
+    x_step = global_x_step if global_x_step is not None else (1.0 if x_is_time else 1e-6)
+    return traces, [global_x_min, global_x_max], float(x_step), x_is_time
 
 
 def build_parquet_preview_figure(
     traces: list[dict[str, Any]],
     *,
     x_range: list[float] | None = None,
-    x_is_datetime: bool,
+    x_is_time: bool,
     height: int = 360,
     legend_only_interaction: bool = False,
 ):
@@ -281,8 +258,8 @@ def build_parquet_preview_figure(
 
     for index, trace in enumerate(traces):
         x_values = trace.get("x") or []
-        if x_is_datetime:
-            x_values = [_epoch_microseconds_to_utc_naive(value) for value in x_values]
+        if x_is_time:
+            x_values = [_time_us_to_utc_naive(value) for value in x_values]
         figure.add_trace(
             go.Scatter(
                 x=x_values,
@@ -303,20 +280,20 @@ def build_parquet_preview_figure(
         dragmode=False,
         hovermode=False if legend_only_interaction else "x unified",
         clickmode="none" if legend_only_interaction else "event",
-        xaxis={"title": "Time (UTC)" if x_is_datetime else "X", "fixedrange": legend_only_interaction},
+        xaxis={"title": "Time (UTC)" if x_is_time else "X", "fixedrange": legend_only_interaction},
         yaxis={"title": "Value", "autorange": True, "fixedrange": legend_only_interaction},
     )
     if x_range and len(x_range) == 2:
-        if x_is_datetime:
-            figure.update_xaxes(range=[_epoch_microseconds_to_utc_naive(x_range[0]), _epoch_microseconds_to_utc_naive(x_range[1])])
+        if x_is_time:
+            figure.update_xaxes(range=[_time_us_to_utc_naive(x_range[0]), _time_us_to_utc_naive(x_range[1])])
         else:
             figure.update_xaxes(range=x_range)
     return figure
 
 
-def _epoch_microseconds_to_utc_naive(epoch_microseconds: float) -> datetime:
-    """Convert epoch microseconds to a naive UTC datetime for Plotly display."""
-    return datetime.fromtimestamp(float(epoch_microseconds) / 1_000_000.0, tz=UTC).replace(tzinfo=None)
+def _time_us_to_utc_naive(time_us: float) -> datetime:
+    """Convert raw `us` values to a naive UTC datetime for Plotly display."""
+    return datetime.fromtimestamp(float(time_us) / 1_000_000.0, tz=UTC).replace(tzinfo=None)
 
 
 __all__ = ["build_parquet_preview_figure", "build_parquet_preview_from_files"]

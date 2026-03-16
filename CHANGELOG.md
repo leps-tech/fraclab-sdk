@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.66
+
+### Workbench
+- **Time window / Browse preview**: unify preview time-axis handling to raw `us` values, allow typed parquet datetime columns to normalize into `us`, and render time axes as UTC timestamps without changing stored window bounds.
+- **Time window picker**: align chart interaction and summary labels around `x_is_time`, fixing broken `X`-axis fallback when parquet time columns are stored as `timestamp[ms/us, tz=UTC]`.
+- **Language switcher**: make the top-right language selector page-local at the widget layer while keeping one global workbench language state, fixing cross-page English/中文 alternating display and preserving manual language changes.
+
+### Validation & Docs
+- **Time window validation**: update validator wording to reflect fixed `us` semantics instead of epoch-UTC wording.
+- **Documentation**: rewrite time-window docs to describe the current `us`-only contract, preview time-column priority, and sparse `itemKey` handling consistently with Workbench behavior.
+
 ## 0.1.65
 
 ### Documentation
