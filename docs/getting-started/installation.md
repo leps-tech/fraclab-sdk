@@ -1,12 +1,12 @@
 # 安装与环境
 
-## 安装核心 SDK
+## PyPI 发布版安装
 
 ```bash
 pip install fraclab-sdk
 ```
 
-## 安装 Workbench
+安装 Workbench：
 
 ```bash
 pip install "fraclab-sdk[workbench]"
@@ -18,6 +18,27 @@ fraclab-workbench
 ```bash
 python -m fraclab_sdk.workbench
 ```
+
+## 仓库源码本地安装
+
+如果你已经在这个仓库里开发或本地试用，不需要先传 GitHub 或 PyPI。
+
+安装核心环境：
+
+```bash
+poetry install
+poetry run fraclab-sdk --help
+```
+
+安装并启用 Workbench + 文档：
+
+```bash
+poetry install --extras workbench --with docs
+poetry run fraclab-workbench
+poetry run mkdocs serve
+```
+
+这里的文档站是从仓库里的 `docs/` 和 `mkdocs.yml` 本地构建出来的，不依赖 GitHub Pages 或 PyPI。
 
 ## CLI 入口
 

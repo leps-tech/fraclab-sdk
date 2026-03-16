@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.64
+## 0.1.65
 
 ### Documentation
 - **OutputContract**: rewrote section to show Pydantic-only usage (`OutputContract`, `OutputDatasetContract`, `*OutputSchema` classes); added explicit error examples for plain dict and missing `type` field.

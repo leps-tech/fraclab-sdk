@@ -28,6 +28,8 @@ poetry install --with docs
 poetry run mkdocs serve
 ```
 
+这里是直接基于当前仓库源码本地起站，不依赖 GitHub Pages 或 PyPI。
+
 构建静态站点：
 
 ```bash
