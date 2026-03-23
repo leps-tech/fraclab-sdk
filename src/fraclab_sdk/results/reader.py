@@ -1,12 +1,12 @@
 """Result reader implementation."""
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from fraclab_sdk.errors import OutputContainmentError, ResultError
 from fraclab_sdk.models import ArtifactInfo, RunOutputManifest
+from fraclab_sdk.results.json_io import load_json_file
 
 
 def file_uri_to_path(uri: str) -> Path:
@@ -172,7 +172,7 @@ class ResultReader:
 
         if artifact.uri:
             path = self._safe_artifact_path(file_uri_to_path(artifact.uri))
-            return json.loads(path.read_text())
+            return load_json_file(path)
 
         if artifact.inline and "data" in artifact.inline:
             return artifact.inline.get("data")
@@ -183,8 +183,8 @@ class ResultReader:
         """Ensure artifact path is within output dir."""
         try:
             path.resolve().relative_to(self._output_dir)
-        except Exception:
-            raise ResultError(f"Artifact path escapes output dir: {path}")
+        except Exception as exc:
+            raise ResultError(f"Artifact path escapes output dir: {path}") from exc
         return path
 
     def read_artifact_scalar(self, artifact_key: str):

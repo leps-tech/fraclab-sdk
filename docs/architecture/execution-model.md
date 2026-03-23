@@ -21,6 +21,19 @@ Fraclab SDK 当前的执行链路是：
 
 这样每次运行的输入都是冻结的、可复现的。
 
+这里有一个容易忽略的边界：
+
+- 原始 Bundle / Snapshot `ds.json` 可以保持平台原始格式
+- SDK 在构建当前 run 输入时，会把运行时真正需要的布局信息补进 `input/ds.json`
+
+当前布局推断来源按这个顺序处理：
+
+1. `ds.json` 自带的 `layout`
+2. Bundle / Snapshot `manifest.json` 中的数据集布局
+3. 实际数据目录结构，例如 `data/<dataset>/parquet/` 或 `data/<dataset>/object.ndjson`
+
+所以运行时 `ctx.data_client` 消费的是“当前 run 的规范化输入”，不是未经处理的原始 Bundle `ds.json`。
+
 ## 输出侧
 
 算法不自己维护 manifest。

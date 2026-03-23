@@ -6,7 +6,11 @@ authors = []
 readme = "README.md"
 include = [
     { path = "README.md", format = ["sdist", "wheel"] },
+    { path = "AI_GUIDE.md", format = ["sdist", "wheel"] },
+    { path = "llms.txt", format = ["sdist", "wheel"] },
     { path = "CHANGELOG.md", format = ["sdist", "wheel"] },
+    { path = "docs", format = ["sdist", "wheel"] },
+    { path = "mkdocs.yml", format = ["sdist", "wheel"] },
     { path = "src/fraclab_sdk/workbench/components/time_window_picker/frontend", format = ["sdist", "wheel"] },
 ]
 packages = [{ include = "fraclab_sdk", from = "src" }]

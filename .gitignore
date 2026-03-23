@@ -24,6 +24,8 @@ tests/**/*.pyc
 !pyproject.toml
 !poetry.lock
 !README.md
+!AI_GUIDE.md
+!llms.txt
 !CHANGELOG.md
 !mkdocs.yml
 !docs/

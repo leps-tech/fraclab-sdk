@@ -1,25 +1,59 @@
 # Fraclab SDK
 
-Fraclab SDK 用来开发、打包、导入和执行本地算法。当前文档站按“上手路径”和“参考手册”拆开，避免再把所有内容堆进一个 README。
+Fraclab SDK 用来开发、打包、导入和执行本地算法。这套文档按“先完成开发闭环，再查细节约束”的方式组织，减少第一次上手时在 README、源码和参考页之间来回跳。
 
-## 推荐阅读路径
+仓库根目录的 `README.md` 现在只保留入口索引；这里的 `docs/` 才是完整人类文档。`docs/`、`AI_GUIDE.md` 和 `llms.txt` 都会随源码分发，也会打进 PyPI 包。
 
-1. 先看[安装与环境](getting-started/installation.md)
-2. 再走一遍[第一个算法](getting-started/first-algorithm.md)
-3. 开始写参数和输出时，分别看：
-   - [InputSpec](guides/input-spec.md)
-   - [Output](guides/output.md)
-4. 需要打包、导入、执行时，看[编译与导入导出](guides/compile-export-import.md)
-5. 查字段和结构时，直接进[参考](reference/runtime-api.md)
+## 先看哪几页
 
-## 文档结构
+如果你是第一次接触这个 SDK，按这个顺序读：
 
-- `快速开始`: 给第一次接触 Fraclab SDK 的用户
-- `算法指南`: 写算法时最常用的规则和示例
-- `CLI`: 命令行入口和常见流程
-- `Workbench`: 图形界面入口和页面说明
-- `参考`: 结构定义、字段表、Bundle 规范、错误处理
-- `架构`: 执行链路和内部模型，主要给维护者
+1. [安装与环境](getting-started/installation.md)
+2. [第一个算法](getting-started/first-algorithm.md)
+3. [InputSpec](guides/input-spec.md)
+4. [Output](guides/output.md)
+5. [编译与导入导出](guides/compile-export-import.md)
+
+## 按任务找文档
+
+### 我要把一个算法跑通
+
+从 [第一个算法](getting-started/first-algorithm.md) 开始。它只覆盖最短开发闭环：拿到 Bundle、写 `main.py`、定义参数和输出、编译导出、导入执行。
+
+### 我要定义参数
+
+看 [InputSpec](guides/input-spec.md)。这里说明 `schema/inputspec.py` 怎么生成 `params.schema.json`，以及 camelCase、时间窗、`bindDatasetKey` 的约束。
+
+### 我要写输出
+
+看 [Output](guides/output.md) 和 [Runtime API](reference/runtime-api.md)。运行时代码只应该通过 `ctx.output` 写结果；`output/manifest.json` 由 SDK 自动生成。
+
+### 我要确认字段取值和数据结构
+
+看 [数据模型](reference/models.md)、[Bundle 规范](reference/bundle-spec.md) 和 [Runtime API](reference/runtime-api.md)。这些页面专门回答“字段名是什么”“允许哪些值”“运行时提供什么对象”。
+
+### 我要理解编译、导出、导入流程
+
+看 [编译与导入导出](guides/compile-export-import.md) 和 [执行模型](architecture/execution-model.md)。
+
+## 文档边界
+
+- 算法运行时入口是 `main.py` 中的 `run(ctx)`
+- 输入读取走 `ctx.data_client`
+- 输出写入走 `ctx.output`
+- Bundle / Snapshot 自带的 `ds.json` / `drs.json` 保持平台原始字段名，例如 `key` / `resource`
+- 算法自己定义的 `params.schema.json`、`output_contract.json`、运行结果 `output/manifest.json` 使用 camelCase
+
+## 给 AI 的入口
+
+如果你正在让 AI 生成或修改算法代码，先读仓库根目录的 `AI_GUIDE.md`。那份文档把：
+
+- 真实运行时上下文
+- 允许的枚举值和 `Literal` 约束
+- 最容易写错的字段名和输出规则
+- 生成代码前必须检查的事项
+
+集中写在了一页里。
 
 ## 本地预览文档站
 
@@ -28,16 +62,8 @@ poetry install --with docs
 poetry run mkdocs serve
 ```
 
-这里是直接基于当前仓库源码本地起站，不依赖 GitHub Pages 或 PyPI。
-
-构建静态站点：
+静态构建：
 
 ```bash
 poetry run mkdocs build
 ```
-
-## 当前边界
-
-- 算法允许依赖的第三方包是固定白名单，见[安装与环境](getting-started/installation.md)
-- 算法输出统一走 `ctx.output`，结果 manifest 由 SDK 自动生成，见[Output](guides/output.md)
-- Bundle 自带的 `ds.json` / `drs.json` 使用平台原始格式 `key` / `resource`，不是 camelCase，见[Bundle 规范](reference/bundle-spec.md)

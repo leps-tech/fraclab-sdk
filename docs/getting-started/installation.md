@@ -6,6 +6,14 @@
 pip install fraclab-sdk
 ```
 
+安装后的包里除了 Python 模块本身，还会包含：
+
+- `docs/`
+- `AI_GUIDE.md`
+- `llms.txt`
+
+也就是说，离线环境里也能直接查完整文档，不要求先访问仓库或站点。
+
 安装 Workbench：
 
 ```bash
@@ -17,6 +25,20 @@ fraclab-workbench
 
 ```bash
 python -m fraclab_sdk.workbench
+```
+
+如果你想在安装后的环境里定位这些文档文件，可以用：
+
+```python
+import inspect
+from pathlib import Path
+
+import fraclab_sdk
+
+site_root = Path(inspect.getfile(fraclab_sdk)).resolve().parent.parent
+print(site_root / "docs")
+print(site_root / "AI_GUIDE.md")
+print(site_root / "llms.txt")
 ```
 
 ## 仓库源码本地安装
@@ -38,7 +60,7 @@ poetry run fraclab-workbench
 poetry run mkdocs serve
 ```
 
-这里的文档站是从仓库里的 `docs/` 和 `mkdocs.yml` 本地构建出来的，不依赖 GitHub Pages 或 PyPI。
+这里的文档站是从仓库里的 `docs/` 和 `mkdocs.yml` 本地构建出来的。发布到 PyPI 的包里也会带 `docs/`，但不会自动带静态站点构建结果。
 
 ## CLI 入口
 

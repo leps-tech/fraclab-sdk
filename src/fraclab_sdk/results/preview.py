@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from fraclab_sdk.models import ArtifactInfo
+from fraclab_sdk.results.json_io import load_json_file
 from fraclab_sdk.results.reader import file_uri_to_path
 
 
@@ -62,7 +63,7 @@ def preview_json_table(artifact: ArtifactInfo) -> dict | None:
         return None
 
     path = file_uri_to_path(artifact.uri)
-    data = json.loads(path.read_text())
+    data = load_json_file(path)
 
     # Handle array of objects
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
@@ -104,8 +105,8 @@ def preview_json_raw(artifact: ArtifactInfo, max_lines: int = 50) -> str | None:
         return None
 
     path = file_uri_to_path(artifact.uri)
-    data = json.loads(path.read_text())
-    formatted = json.dumps(data, indent=2)
+    data = load_json_file(path)
+    formatted = json.dumps(data, indent=2, ensure_ascii=False)
 
     lines = formatted.split("\n")
     if len(lines) > max_lines:
@@ -137,7 +138,7 @@ def get_artifact_preview_type(artifact: ArtifactInfo) -> str:
         if artifact.uri:
             try:
                 path = file_uri_to_path(artifact.uri)
-                data = json.loads(path.read_text())
+                data = load_json_file(path)
                 if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
                     return "json_table"
             except Exception:
