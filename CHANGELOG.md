@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.66
+## 0.1.68
 
 ### Workbench
 - **Time window / Browse preview**: unify preview time-axis handling to raw `us` values, allow typed parquet datetime columns to normalize into `us`, and render time axes as UTC timestamps without changing stored window bounds.
