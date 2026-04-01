@@ -77,6 +77,17 @@ poetry run fraclab-sdk --help
 - 执行模型: [`docs/architecture/execution-model.md`](docs/architecture/execution-model.md)
 - CLI: [`docs/cli/overview.md`](docs/cli/overview.md)
 
+## 仓库内示例算法
+
+当前仓库里可直接对照的完整样例主要在 `algorithms/`：
+
+- `bh-prop-conc`: stage 级 frame 读取 + 井底支撑剂浓度估算
+- `frac-derived-curves`: stage 级派生曲线分析
+- `hf-fracture-curves`: 高频压力整表分析
+- `hf-fracture-curves-streaming`: 高频压力流式 chunk 分析
+
+其中流式读取写法优先参考 `hf-fracture-curves-streaming`；旧样例里直接拼 run 输入路径的读法不要再当成公开契约。
+
 ## 本地预览文档站
 
 ```bash

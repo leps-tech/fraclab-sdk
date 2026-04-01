@@ -230,3 +230,48 @@ def test_time_window_unit_must_be_explicit_microseconds() -> None:
     _validate_schema_properties(invalid_unit_schema, invalid_unit_schema, "", issues)
 
     assert "TIME_WINDOW_UNIT_INVALID" in _issue_codes(issues)
+
+
+def test_generic_array_field_warns_that_workbench_falls_back_to_json() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "parameterEntries": {
+                "type": "array",
+                "title": "Parameter Entries",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string", "title": "Name"},
+                        "value": {"type": "number", "title": "Value"},
+                    },
+                },
+            }
+        },
+    }
+    issues = []
+
+    _validate_schema_properties(schema, schema, "", issues)
+
+    assert "INPUTSPEC_WORKBENCH_ARRAY_JSON_ONLY" in _issue_codes(issues)
+
+
+def test_array_of_enum_does_not_warn_about_json_fallback() -> None:
+    schema = {
+        "type": "object",
+        "properties": {
+            "datasetKeys": {
+                "type": "array",
+                "title": "Dataset Keys",
+                "items": {
+                    "type": "string",
+                    "enum": ["a", "b"],
+                },
+            }
+        },
+    }
+    issues = []
+
+    _validate_schema_properties(schema, schema, "", issues)
+
+    assert "INPUTSPEC_WORKBENCH_ARRAY_JSON_ONLY" not in _issue_codes(issues)

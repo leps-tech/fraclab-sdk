@@ -185,6 +185,47 @@ def _is_float_range_schema(schema: dict[str, Any], root_schema: dict[str, Any]) 
     return _is_numeric_schema(min_schema) and _is_numeric_schema(max_schema)
 
 
+def _array_items_use_enum(schema: dict[str, Any], root_schema: dict[str, Any]) -> bool:
+    """Whether an array schema is rendered as a multiselect in Workbench."""
+    schema = _normalize_schema(schema, root_schema)
+    if schema.get("type") != "array":
+        return False
+    items = schema.get("items")
+    if not isinstance(items, dict):
+        return False
+    items = _normalize_schema(items, root_schema)
+    return isinstance(items.get("enum"), list) or "const" in items
+
+
+def _validate_workbench_renderability(
+    field_schema: dict[str, Any],
+    root_schema: dict[str, Any],
+    extra: dict[str, Any],
+    path: str,
+    issues: list[ValidationIssue],
+) -> None:
+    """Warn when a valid schema will fall back to raw JSON in the Run page."""
+    schema = _normalize_schema(field_schema, root_schema)
+    if schema.get("type") != "array":
+        return
+    if extra.get("uiType") == "time_window":
+        return
+    if _array_items_use_enum(schema, root_schema):
+        return
+    issues.append(
+        ValidationIssue(
+            severity=ValidationSeverity.WARNING,
+            code="INPUTSPEC_WORKBENCH_ARRAY_JSON_ONLY",
+            message=(
+                "Workbench Run page does not provide structured widgets for this array field; "
+                "it falls back to raw JSON editing."
+            ),
+            path=path,
+            details={"supportedArrays": ["array of enum", "uiType=time_window"]},
+        )
+    )
+
+
 def _validate_time_window_shape(
     field_schema: dict[str, Any],
     root_schema: dict[str, Any],
@@ -1067,6 +1108,7 @@ def _validate_schema_properties(
 
         # Validate title requirement for leaf fields
         _validate_title_requirement(resolved_schema, field_path, issues)
+        _validate_workbench_renderability(field_schema, full_schema, extra, field_path, issues)
 
         # Recurse into nested objects
         if resolved_schema.get("type") == "object" or "properties" in resolved_schema:

@@ -36,14 +36,26 @@ These files contain legacy or overly relaxed patterns. Do not use them as source
 
 - `algorithms/schemas/specs/output.py`
 - `algorithms/echo_algorithm/local/schema/output_contract.py`
-- `algorithms/pressure-trace-viz/0.1.0/schema/base.py`
-- `algorithms/pressure-trace-viz/0.1.0/schema/inputspec.py`
+- `algorithms/parquet-smoke-test/0.1.0/main.py`
+- `algorithms/pressure-trace-viz/0.1.0/main.py`
 
 Reasons:
 
 - some use snake_case helper names where current validation expects camelCase keys
 - some relax constrained fields into plain `str`
+- some older examples reach into run-local files directly instead of treating `DataClient` as the runtime read contract
 - some import paths do not match the real public package layout
+
+## Repository Examples Worth Reading
+
+If you need in-repo examples that follow the current SDK more closely, start with:
+
+- `algorithms/bh-prop-conc/0.1.0/`
+- `algorithms/frac-derived-curves/0.1.0/`
+- `algorithms/hf-fracture-curves/0.1.0/`
+- `algorithms/hf-fracture-curves-streaming/0.1.0/`
+
+These are examples, not source-of-truth. Public behavior is still defined by `src/fraclab_sdk/` plus the docs listed above.
 
 ## Package Dependency Contract For Algorithms
 
@@ -141,7 +153,9 @@ def run(ctx) -> None:
 - call `ctx.data_client.get_dataset_keys()` to discover available datasets
 - call `ctx.data_client.get_layout(dataset_key)` before assuming access pattern
 - only use `read_object()` and `iterate_objects()` for `object_ndjson_lines`
-- only use `get_parquet_dir()` and `get_parquet_files()` for `frame_parquet_item_dirs`
+- use `get_frame_columns()` to discover logical frame columns for `frame_parquet_item_dirs`
+- use `read_frame()`, `iter_frame_chunks()`, `iter_dataset_frame_chunks()`, or `iter_frame_batches()` to read frame datasets
+- do not use `get_parquet_dir()` or `get_parquet_files()` in new algorithms; raw parquet path access is no longer part of the public runtime contract
 - do not assume every dataset is parquet-backed
 
 Current bundle layout values:

@@ -71,6 +71,8 @@ def run(ctx) -> None:
 
 不要在示例里发明 `ctx.artifacts` 之类的别名。真实运行时暴露的是 `output`。
 
+如果后面要读取 frame/parquet 数据，也不要自己去拼 `input/data/...` 路径。当前 SDK 约定是通过 `ctx.data_client.get_frame_columns()`、`read_frame()`、`iter_frame_chunks()`、`iter_frame_batches()` 读取逻辑视图，原始 parquet 路径访问不再是公开契约。
+
 ## 第二步：写最小 `schema/inputspec.py`
 
 ```python
@@ -165,6 +167,17 @@ fraclab-sdk run execute <run_id>
 - 想理解 Bundle / Snapshot：[Bundle 与 Snapshot](../guides/bundle-snapshot.md)
 - 想查编译、导入、导出的边界：[编译与导入导出](../guides/compile-export-import.md)
 - 想查运行时对象和模型字段：[参考](../reference/runtime-api.md)
+
+## 仓库里现成可对照的样例
+
+如果你不想从最小示例起步，仓库当前有几份完整算法可以直接对照：
+
+- `algorithms/bh-prop-conc/0.1.0/`: 读取 stage 级 frame 数据，输出图和汇总对象
+- `algorithms/frac-derived-curves/0.1.0/`: 读取整表后做派生曲线分析
+- `algorithms/hf-fracture-curves/0.1.0/`: 高频压力整表分析
+- `algorithms/hf-fracture-curves-streaming/0.1.0/`: 流式 chunk 读取与增量计算
+
+看样例时优先关注它们如何使用 `ctx.data_client` 和 `ctx.output`，不要照抄旧样例里直接摸 run 目录文件的写法。
 
 ## 最常见的 5 个误区
 

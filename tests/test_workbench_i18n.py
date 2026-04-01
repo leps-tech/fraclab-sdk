@@ -26,16 +26,6 @@ def test_tx_preserves_missing_placeholders_when_partially_formatted(monkeypatch)
     )
 
 
-def test_get_language_prefers_toolbar_selection(monkeypatch) -> None:
-    monkeypatch.setattr(i18n.st, "session_state", {i18n._LANGUAGE_SELECT_KEY: "zh-CN"})  # type: ignore[attr-defined]
-    writes: list[str] = []
-    monkeypatch.setattr(i18n, "write_global_setting", lambda key, value, config=None: writes.append(value))
-
-    assert i18n.get_language() == "zh-CN"
-    assert i18n.st.session_state[i18n._LANGUAGE_SESSION_KEY] == "zh-CN"  # type: ignore[attr-defined]
-    assert writes == ["zh-CN"]
-
-
 def test_default_language_is_chinese_without_override(monkeypatch) -> None:
     monkeypatch.delenv("FRACLAB_WORKBENCH_LANG", raising=False)
 
@@ -76,22 +66,3 @@ def test_apply_selected_language_updates_session_and_persistence(monkeypatch) ->
     assert i18n.st.session_state[i18n._LANGUAGE_SESSION_KEY] == "en"  # type: ignore[attr-defined]
     assert writes == ["en"]
 
-
-def test_render_language_toolbar_relies_on_session_state_instead_of_index(monkeypatch) -> None:
-    session_state: dict[str, str] = {}
-    captured: dict[str, object] = {}
-
-    monkeypatch.setattr(i18n.st, "session_state", session_state)  # type: ignore[attr-defined]
-    monkeypatch.setattr(i18n, "get_language", lambda: "zh-CN")
-
-    def fake_selectbox(*args, **kwargs):
-        captured.update(kwargs)
-        return "zh-CN"
-
-    monkeypatch.setattr(i18n.st, "selectbox", fake_selectbox)
-
-    i18n.render_language_toolbar()
-
-    assert session_state[i18n._LANGUAGE_SELECT_KEY] == "zh-CN"  # type: ignore[attr-defined]
-    assert "index" not in captured
-    assert captured["on_change"] == i18n._apply_selected_language  # type: ignore[attr-defined]

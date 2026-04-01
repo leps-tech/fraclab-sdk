@@ -43,6 +43,16 @@ def run(ctx):
 threshold: float = Field(default=0.5, json_schema_extra={"step": 0.01})
 ```
 
+## Workbench 数组渲染边界
+
+当前 Workbench Run 页不会为所有 `array` 字段自动生成结构化控件。
+
+- `uiType="time_window"`: 有专门时间窗控件
+- `array` of `enum`: 会渲染成多选
+- 其他数组: 会退回 raw JSON 编辑
+
+这类 schema 本身仍然是合法的，但校验器会给出 `INPUTSPEC_WORKBENCH_ARRAY_JSON_ONLY` 警告，提醒你 Workbench 端不是结构化表单体验。
+
 ## 时间窗参数
 
 时间窗字段统一用：

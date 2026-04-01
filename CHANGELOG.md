@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.69
+
+### Runtime & Validation
+- **DataClient frame reads**: add `get_frame_columns()`, `read_frame()`, `iter_frame_batches()`, `iter_frame_chunks()`, and `iter_dataset_frame_chunks()` so algorithms read logical frame data through the runtime API instead of reaching into raw parquet paths.
+- **Core dataset delivery**: when `input/drs.json` declares `sampling.deliveryHz`, `DataClient` now downsampled core frame reads to the requested delivery rate, deriving raw frequency from `period_us` or `ts_us` and rejecting requests above the detected source rate.
+- **Workbench validation**: valid generic array fields now emit a warning when the Run page can only render them as raw JSON, instead of silently looking like a fully structured widget.
+
+### Bundled Examples & Docs
+- **Bundled example algorithms**: add repository examples for `bh-prop-conc`, `frac-derived-curves`, `hf-fracture-curves`, and `hf-fracture-curves-streaming`, and pin their `requires.sdk` to this release line.
+- **Documentation alignment**: refresh runtime/input-spec/AI guidance so docs match the current DataClient contract, Workbench array rendering limits, and the example algorithms shipped in `algorithms/`.
+
 ## 0.1.68
 
 ### Workbench
