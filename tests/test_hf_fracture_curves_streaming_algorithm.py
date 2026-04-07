@@ -104,7 +104,6 @@ def _write_test_bundle(bundle_dir: Path) -> None:
     (bundle_dir / "drs.json").write_text(json.dumps(drs, indent=2), encoding="utf-8")
     (bundle_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-
 def test_hf_fracture_curves_streaming_algorithm_runs_end_to_end(tmp_path) -> None:
     workspace_src = Path("algorithms/hf-fracture-curves-streaming/0.1.0")
     workspace = tmp_path / "algo"
@@ -113,6 +112,12 @@ def test_hf_fracture_curves_streaming_algorithm_runs_end_to_end(tmp_path) -> Non
     bundle_dir = tmp_path / "bundle"
     _write_test_bundle(bundle_dir)
     compile_algorithm(workspace, bundle_path=bundle_dir)
+    params_schema = json.loads((workspace / "dist" / "params.schema.json").read_text(encoding="utf-8"))
+    assert "rangeStartSec" not in params_schema["properties"]
+    assert "rangeEndSec" not in params_schema["properties"]
+    assert params_schema["properties"]["slow2LevelTauSec"]["default"] == 2.0
+    assert params_schema["properties"]["slow2TrendTauSec"]["default"] == 4.0
+    assert "timeWindows_samples_core_stage_5826" not in params_schema["properties"]
 
     run_dir = tmp_path / "run"
     input_dir = run_dir / "input"
@@ -135,13 +140,67 @@ def test_hf_fracture_curves_streaming_algorithm_runs_end_to_end(tmp_path) -> Non
     assert exit_code == 0
 
     summary_json = run_dir / "output" / "artifacts" / "summary.json"
+    diagnostics_json = run_dir / "output" / "artifacts" / "diagnostics.json"
     overview_png = run_dir / "output" / "artifacts" / "overview_plot.png"
     assert summary_json.exists()
+    assert diagnostics_json.exists()
     assert overview_png.exists()
 
     summary = json.loads(summary_json.read_text(encoding="utf-8"))
     assert summary["curveFamily"] == "hf_pressure_fracture_proxies_streaming"
     assert summary["streaming"]["analysisHz"] > 0.0
+    assert summary["processingConfig"]["baselineMode"] == "slow2_alpha_beta"
     assert summary["rows"]["emitted"] > 0
+    assert summary["selectedWindow"]["mode"] == "auto_stage_to_terminal"
     assert summary["metrics"]["fractureEffectivenessRawFinal"] >= 0.0
     assert summary["metrics"]["effectivenessRawMonotonicity"] >= 0.99
+    assert summary["metrics"]["completedEventCount"] >= 0
+    assert 0.0 <= summary["selectedWindow"]["actualStartSec"] <= 2.0
+    assert summary["selectedWindow"]["actualEndSec"] > summary["selectedWindow"]["actualStartSec"]
+
+    diagnostics = json.loads(diagnostics_json.read_text(encoding="utf-8"))
+    assert len(diagnostics["timeSeries"]["timeS"]) == summary["rows"]["emitted"]
+    assert len(diagnostics["timeSeries"]["pressureBaseline"]) == summary["rows"]["emitted"]
+    assert len(diagnostics["timeSeries"]["fractureFrequencyDisplay"]) == summary["rows"]["emitted"]
+
+def test_hf_fracture_curves_streaming_ignores_unknown_legacy_time_window_params(tmp_path) -> None:
+    workspace_src = Path("algorithms/hf-fracture-curves-streaming/0.1.0")
+    workspace = tmp_path / "algo"
+    shutil.copytree(workspace_src, workspace)
+
+    bundle_dir = tmp_path / "bundle"
+    _write_test_bundle(bundle_dir)
+    compile_algorithm(workspace, bundle_path=bundle_dir)
+
+    run_dir = tmp_path / "run"
+    input_dir = run_dir / "input"
+    shutil.copytree(bundle_dir, input_dir)
+    params = {
+        "timeWindows_samples_core_stage_5826": [
+            {
+                "itemKey": "item00",
+                "min": 40_000_000.0,
+                "max": 120_000_000.0,
+            }
+        ]
+    }
+    (input_dir / "params.json").write_text(json.dumps(params), encoding="utf-8")
+    (input_dir / "run_context.json").write_text(
+        json.dumps(
+            {
+                "runId": "run-test-window-item-prefixed",
+                "snapshotId": "snapshot-test",
+                "algorithmId": "hf-fracture-curves-streaming",
+                "algorithmVersion": "0.1.0",
+                "contractVersion": "1.0.0",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = run_algorithm(run_dir, workspace / "main.py")
+    assert exit_code == 0
+
+    summary = json.loads((run_dir / "output" / "artifacts" / "summary.json").read_text(encoding="utf-8"))
+    assert summary["rows"]["emitted"] > 0
+    assert summary["selectedWindow"]["mode"] == "auto_stage_to_terminal"

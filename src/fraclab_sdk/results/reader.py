@@ -25,6 +25,11 @@ def file_uri_to_path(uri: str) -> Path:
     if parsed.scheme != "file":
         raise ValueError(f"Expected file:// URI, got: {uri}")
     decoded = unquote(parsed.path)
+    # On Windows, file:///C:/path → urlparse path = /C:/path (leading slash before drive letter).
+    # Path('/C:/...') on Windows is drive-relative (treats C: as a directory), not absolute.
+    # Strip the spurious leading slash before a Windows drive letter.
+    if len(decoded) >= 3 and decoded[0] == "/" and decoded[2] == ":":
+        decoded = decoded[1:]
     return Path(decoded).expanduser().resolve()
 
 
